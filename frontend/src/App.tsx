@@ -2,6 +2,8 @@
 import {
   Camera,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   Download,
   Edit3,
@@ -123,6 +125,7 @@ const officeOptions = [
 
 const inputClass =
   'h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 shadow-[inset_0_1px_2px_rgba(15,23,42,0.06),0_1px_1px_rgba(15,23,42,0.03)] outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-100'
+const pageSizeOptions = [10, 25, 50, 100]
 
 function App() {
   const [records, setRecords] = useState<AgentRecord[]>([])
@@ -142,6 +145,8 @@ function App() {
   const [exportAll, setExportAll] = useState(true)
   const [selectedExportChecks, setSelectedExportChecks] = useState<string[]>([])
   const [exportUserCheckOptions, setExportUserCheckOptions] = useState<string[]>([])
+  const [pageSize, setPageSize] = useState(10)
+  const [currentPage, setCurrentPage] = useState(1)
 
   const userCheck = useMemo(() => getUserCheck(), [])
 
@@ -181,6 +186,12 @@ function App() {
   }
 
   const userCheckOptions = exportUserCheckOptions
+  const totalPages = Math.max(1, Math.ceil(visibleRecords.length / pageSize))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const pageStart = visibleRecords.length === 0 ? 0 : (safeCurrentPage - 1) * pageSize
+  const pageEnd = Math.min(pageStart + pageSize, visibleRecords.length)
+  const pagedRecords = visibleRecords.slice(pageStart, pageEnd)
+  const paginationItems = getPaginationItems(safeCurrentPage, totalPages)
 
   async function loadRecords(nextFilter = filter, options: { silent?: boolean } = {}) {
     const silent = options.silent ?? records.length > 0
@@ -524,7 +535,10 @@ function App() {
                 <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
                 <input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => {
+                    setSearch(event.target.value)
+                    setCurrentPage(1)
+                  }}
                   placeholder="ค้นหา..."
                   className="h-11 w-full rounded-md border border-white/80 bg-white/75 pl-10 pr-3 text-sm outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
                 />
@@ -551,7 +565,10 @@ function App() {
                     <button
                       key={item.value || 'all'}
                       type="button"
-                      onClick={() => setFilter(item.value)}
+                      onClick={() => {
+                        setFilter(item.value)
+                        setCurrentPage(1)
+                      }}
                       className={`flex h-16 flex-col items-center justify-center gap-1 rounded-md border text-xs font-extrabold transition ${
                         active
                           ? 'border-teal-500 bg-teal-50/85 text-teal-800 shadow-sm ring-2 ring-teal-100'
@@ -675,9 +692,9 @@ function App() {
                       </td>
                     </tr>
                   ) : (
-                    visibleRecords.map((row, index) => (
+                    pagedRecords.map((row, index) => (
                       <tr key={row.id} className="hover:bg-white/85">
-                        <td className="px-3 py-3 font-bold text-slate-500">{index + 1}</td>
+                        <td className="px-3 py-3 font-bold text-slate-500">{pageStart + index + 1}</td>
                         <td className="px-3 py-3 font-bold text-slate-700">{row.asset_no || '-'}</td>
                         <td className="px-3 py-3 font-extrabold text-slate-950">{row.hostname || '-'}</td>
                         <td className="px-3 py-3 text-slate-600">{row.ip_address || '-'}</td>
@@ -723,6 +740,77 @@ function App() {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="flex shrink-0 flex-col gap-3 border-t border-white/70 bg-white/72 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm font-semibold text-slate-600">
+                Showing <span className="font-extrabold text-slate-950">{visibleRecords.length === 0 ? 0 : pageStart + 1}</span>
+                {'-'}
+                <span className="font-extrabold text-slate-950">{pageEnd}</span> of <span className="font-extrabold text-slate-950">{visibleRecords.length}</span>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+                  <span className="whitespace-nowrap">Rows per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(event) => {
+                      setPageSize(Number(event.target.value))
+                      setCurrentPage(1)
+                    }}
+                    className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm font-bold text-slate-800 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
+                  >
+                    {pageSizeOptions.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+                    disabled={safeCurrentPage === 1 || visibleRecords.length === 0}
+                    className="inline-flex h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <ChevronLeft size={16} />
+                    Previous
+                  </button>
+
+                  {paginationItems.map((item, index) =>
+                    item === 'ellipsis' ? (
+                      <span key={`ellipsis-${index}`} className="flex h-9 w-9 items-center justify-center text-sm font-bold text-slate-400">
+                        ...
+                      </span>
+                    ) : (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setCurrentPage(item)}
+                        className={`h-9 min-w-9 rounded-md border px-3 text-sm font-extrabold transition ${
+                          item === safeCurrentPage
+                            ? 'border-teal-600 bg-teal-700 text-white shadow-sm'
+                            : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-teal-200 hover:bg-teal-50'
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    ),
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+                    disabled={safeCurrentPage === totalPages || visibleRecords.length === 0}
+                    className="inline-flex h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    Next
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
         </main>
@@ -926,6 +1014,23 @@ function SelectField({ label, value, options, onChange }: { label: string; value
       </select>
     </label>
   )
+}
+
+function getPaginationItems(currentPage: number, totalPages: number): Array<number | 'ellipsis'> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1])
+  const sortedPages = Array.from(pages)
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b)
+
+  return sortedPages.flatMap((page, index) => {
+    if (index === 0) return [page]
+    const previous = sortedPages[index - 1]
+    return page - previous > 1 ? ['ellipsis', page] : [page]
+  })
 }
 
 function ImageThumb({ src, onView, onRemove }: { src: string; onView: () => void; onRemove: () => void }) {
