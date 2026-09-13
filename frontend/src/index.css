@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Inter, Prompt, ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.sso-delete-alert {
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 12px;
+  padding: 24px 24px 22px;
+  color: #0f172a;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+}
+
+.sso-delete-alert-title {
+  padding: 0;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.sso-delete-alert-icon {
+  margin: 0 auto 16px;
+}
+
+.delete-alert-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.delete-alert-content strong {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.delete-alert-content span {
+  color: #64748b;
+  font-weight: 650;
+}
+
+.delete-alert-content small {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sso-delete-alert-actions {
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.sso-delete-alert-confirm,
+.sso-delete-alert-cancel {
+  min-width: 112px;
+  height: 40px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 18px;
+  font-size: 14px;
+  font-weight: 800;
+  outline: none;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+
+.sso-delete-alert-confirm {
+  background: #dc2626;
+  color: #ffffff;
+  box-shadow: 0 10px 20px rgba(220, 38, 38, 0.18);
+}
+
+.sso-delete-alert-confirm:hover {
+  background: #b91c1c;
+}
+
+.sso-delete-alert-confirm:focus-visible {
+  box-shadow: 0 0 0 4px rgba(254, 202, 202, 0.9);
+}
+
+.sso-delete-alert-cancel {
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+}
+
+.sso-delete-alert-cancel:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.sso-delete-alert-cancel:focus-visible {
+  box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.16);
+}
