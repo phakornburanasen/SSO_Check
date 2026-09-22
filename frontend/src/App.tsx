@@ -7,6 +7,7 @@ import {
   Circle,
   Download,
   Edit3,
+  ExternalLink,
   Eye,
   ImageIcon,
   LayoutGrid,
@@ -78,6 +79,7 @@ const API_BASE = (import.meta.env.VITE_API_BASE || DEFAULT_API_BASE).replace(/\/
 const MUTATION_API_BASE = (import.meta.env.VITE_MUTATION_API_BASE || DEFAULT_MUTATION_API_BASE).replace(/\/$/, '')
 const apiURL = (path: string) => `${API_BASE}${path}`
 const mutationApiURL = (path: string) => `${MUTATION_API_BASE}${path}`
+const SAP_SEARCH_URL = 'http://10.0.32.71/SearchAsset/'
 
 const typeOptions = [
   { value: '', label: 'ทั้งหมด', icon: LayoutGrid },
@@ -145,6 +147,7 @@ function App() {
   const [exportAll, setExportAll] = useState(true)
   const [selectedExportChecks, setSelectedExportChecks] = useState<string[]>([])
   const [exportUserCheckOptions, setExportUserCheckOptions] = useState<string[]>([])
+  const [assetListUserCheck, setAssetListUserCheck] = useState('')
   const [pageSize, setPageSize] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -176,7 +179,9 @@ function App() {
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
-    return text.includes(search.toLowerCase())
+    const matchesSearch = text.includes(search.toLowerCase())
+    const matchesUserCheck = !assetListUserCheck || row.user_check === assetListUserCheck
+    return matchesSearch && matchesUserCheck
   })
 
   const stats = {
@@ -427,7 +432,7 @@ function App() {
       } else {
         selectedExportChecks.forEach((item) => params.append('userCheck', item))
       }
-      const res = await fetch(apiURL(`/export${params.toString() ? `?${params}` : ''}`))
+      const res = await fetch(mutationApiURL(`/export${params.toString() ? `?${params}` : ''}`))
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error || 'Export Excel ไม่สำเร็จ')
@@ -531,19 +536,7 @@ function App() {
             </button>
 
             <div className="mt-4 rounded-lg border border-white/70 bg-white/45 p-4 shadow-sm backdrop-blur">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-                <input
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value)
-                    setCurrentPage(1)
-                  }}
-                  placeholder="ค้นหา..."
-                  className="h-11 w-full rounded-md border border-white/80 bg-white/75 pl-10 pr-3 text-sm outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
-                />
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div className="grid grid-cols-3 gap-2 text-center">
                 <Stat label="ทั้งหมด" value={stats.total} />
                 <Stat label="Computer" value={stats.computers} />
                 <Stat label="อื่น ๆ" value={stats.other} />
@@ -634,7 +627,7 @@ function App() {
           </aside>
 
           <section className="flex flex-col rounded-lg border border-white/70 bg-white/58 shadow-[0_18px_46px_rgba(15,23,42,0.10)] backdrop-blur-xl lg:min-h-0 lg:overflow-hidden">
-            <div className="flex h-[58px] shrink-0 items-center justify-between border-b border-white/70 bg-white/62 px-4 backdrop-blur">
+            <div className="flex shrink-0 flex-col gap-3 border-b border-white/70 bg-white/62 px-4 py-3 backdrop-blur xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-extrabold leading-5">Asset List</h2>
@@ -646,10 +639,49 @@ function App() {
                   )}
                 </div>
                 <p className="text-xs font-semibold text-slate-500">
-                  {visibleRecords.length} รายการ {filter ? `ใน ${typeLabels[filter]}` : 'ทั้งหมด'}
+                  {visibleRecords.length} รายการ {filter ? `ใน ${typeLabels[filter]}` : 'ทั้งหมด'} {assetListUserCheck ? ` / User Check ${assetListUserCheck}` : ''}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="relative w-full sm:w-72 xl:w-80">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                  <input
+                    value={search}
+                    onChange={(event) => {
+                      setSearch(event.target.value)
+                      setCurrentPage(1)
+                    }}
+                    placeholder="ค้นหา Asset List..."
+                    className="h-9 w-full rounded-md border border-white/80 bg-white/75 pl-10 pr-3 text-sm font-semibold outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="whitespace-nowrap text-sm font-bold text-slate-600">User check</span>
+                  <select
+                    value={assetListUserCheck}
+                    onChange={(event) => {
+                      setAssetListUserCheck(event.target.value)
+                      setCurrentPage(1)
+                    }}
+                    className="h-9 w-full rounded-md border border-white/80 bg-white/75 px-3 text-sm font-bold text-slate-700 outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100 sm:w-44"
+                  >
+                    <option value="">ทั้งหมด</option>
+                    {userCheckOptions.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <a
+                  href={SAP_SEARCH_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md border border-teal-200/80 bg-white/70 px-3 text-sm font-bold text-teal-800 shadow-sm backdrop-blur hover:bg-teal-50/80"
+                >
+                  <ExternalLink size={15} />
+                  ค้นหาข้อมูลจาก SAP
+                </a>
                 <button type="button" onClick={() => loadRecords()} className="h-9 rounded-md border border-white/70 bg-white/65 px-3 text-sm font-bold shadow-sm backdrop-blur hover:bg-white/90">
                   Refresh
                 </button>

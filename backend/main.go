@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -239,7 +240,7 @@ Office_Version, Detail, Users, Dep, asset_no, img_png, Status_mac, user_check FR
 		}
 		query += " WHERE user_check IN (" + strings.Join(placeholders, ",") + ")"
 	}
-	query += " ORDER BY id DESC"
+	query += " ORDER BY COALESCE(NULLIF(LTRIM(RTRIM(Users)), ''), 'ZZZZZZ'), id"
 
 	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -288,6 +289,83 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 		}
 	}
 
+	headerStyle, bodyStyle, err := excelStyles(file)
+	if err != nil {
+		return nil, err
+	}
+
+	hostnameSet := map[string]bool{}
+	hostnames := []string{}
+	for _, rec := range records {
+		hostname := stringValue(rec.Hostname)
+		if hostname == "" || hostnameSet[hostname] {
+			continue
+		}
+		hostnameSet[hostname] = true
+		hostnames = append(hostnames, hostname)
+	}
+	diskCache, err := a.diskRecordsByHostname(ctx, hostnames)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := a.writeExcelSheet(file, sheet, records, diskCache, headerStyle, bodyStyle); err != nil {
+		return nil, err
+	}
+
+	usedSheets := map[string]bool{strings.ToLower(sheet): true}
+	depGroups := map[string][]record{}
+	depOrder := []string{}
+	for _, rec := range records {
+		dep := strings.TrimSpace(stringValue(rec.Dep))
+		if dep == "" {
+			dep = "No_Dep"
+		}
+		if _, exists := depGroups[dep]; !exists {
+			depOrder = append(depOrder, dep)
+		}
+		depGroups[dep] = append(depGroups[dep], rec)
+	}
+	sort.Strings(depOrder)
+	for _, dep := range depOrder {
+		depSheet := uniqueSheetName(dep, usedSheets)
+		if _, err := file.NewSheet(depSheet); err != nil {
+			return nil, err
+		}
+		if err := a.writeExcelSheet(file, depSheet, depGroups[dep], diskCache, headerStyle, bodyStyle); err != nil {
+			return nil, err
+		}
+	}
+
+	return file, nil
+}
+
+func excelStyles(file *excelize.File) (int, int, error) {
+	headerStyle, err := file.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Family: "Century", Size: 12, Bold: true},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
+		Border: []excelize.Border{
+			{Type: "left", Color: "D0D7E2", Style: 1},
+			{Type: "right", Color: "D0D7E2", Style: 1},
+			{Type: "top", Color: "D0D7E2", Style: 1},
+			{Type: "bottom", Color: "D0D7E2", Style: 1},
+		},
+		Fill: excelize.Fill{Type: "pattern", Color: []string{"E8EDF4"}, Pattern: 1},
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	bodyStyle, err := file.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Family: "Century", Size: 12},
+		Alignment: &excelize.Alignment{Vertical: "center"},
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return headerStyle, bodyStyle, nil
+}
+
+func (a *app) writeExcelSheet(file *excelize.File, sheet string, records []record, diskCache map[string][]diskRecord, headerStyle, bodyStyle int) error {
 	headers := map[string]string{
 		"A3": "No.",
 		"B3": "Asset No",
@@ -313,33 +391,12 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 	}
 	for cell, value := range headers {
 		if err := file.SetCellValue(sheet, cell, value); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	headerStyle, err := file.NewStyle(&excelize.Style{
-		Font:      &excelize.Font{Family: "Century", Size: 12, Bold: true},
-		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
-		Border: []excelize.Border{
-			{Type: "left", Color: "D0D7E2", Style: 1},
-			{Type: "right", Color: "D0D7E2", Style: 1},
-			{Type: "top", Color: "D0D7E2", Style: 1},
-			{Type: "bottom", Color: "D0D7E2", Style: 1},
-		},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"E8EDF4"}, Pattern: 1},
-	})
-	if err != nil {
-		return nil, err
-	}
-	bodyStyle, err := file.NewStyle(&excelize.Style{
-		Font:      &excelize.Font{Family: "Century", Size: 12},
-		Alignment: &excelize.Alignment{Vertical: "center"},
-	})
-	if err != nil {
-		return nil, err
-	}
 	if err := file.SetCellStyle(sheet, "A3", "U3", headerStyle); err != nil {
-		return nil, err
+		return err
 	}
 
 	row := 4
@@ -361,7 +418,7 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 			"U": stringValue(rec.Username),
 		}
 		if err := setRowValues(file, sheet, row, values); err != nil {
-			return nil, err
+			return err
 		}
 		row++
 
@@ -369,11 +426,7 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 		if hostname == "" {
 			continue
 		}
-		disks, err := a.diskRecords(ctx, hostname)
-		if err != nil {
-			return nil, err
-		}
-		for _, disk := range disks {
+		for _, disk := range diskCache[hostname] {
 			values := map[string]any{
 				"M": stringValue(disk.DriveLetter),
 				"N": stringValue(disk.Model),
@@ -384,7 +437,7 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 				"S": floatValue(disk.UsedPercent),
 			}
 			if err := setRowValues(file, sheet, row, values); err != nil {
-				return nil, err
+				return err
 			}
 			row++
 		}
@@ -392,7 +445,7 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 
 	if row > 4 {
 		if err := file.SetCellStyle(sheet, "A4", fmt.Sprintf("U%d", row-1), bodyStyle); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	widths := map[string]float64{
@@ -401,7 +454,7 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 	}
 	for col, width := range widths {
 		if err := file.SetColWidth(sheet, col, col, width); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if err := file.SetPanes(sheet, &excelize.Panes{
@@ -412,26 +465,72 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 		TopLeftCell: "A4",
 		ActivePane:  "bottomLeft",
 	}); err != nil {
-		return nil, err
+		return err
 	}
 
-	return file, nil
+	return nil
 }
 
-func (a *app) diskRecords(ctx context.Context, hostname string) ([]diskRecord, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT drive_letter, model, disk_type, total_gb, free_gb, used_gb, Used_percent
-FROM Agent_Disk WHERE hostname = @p1 ORDER BY drive_letter`, hostname)
+func uniqueSheetName(value string, used map[string]bool) string {
+	base := safeSheetName(value)
+	name := base
+	for i := 2; used[strings.ToLower(name)]; i++ {
+		suffix := fmt.Sprintf("_%d", i)
+		name = truncateSheetName(base, 31-len(suffix)) + suffix
+	}
+	used[strings.ToLower(name)] = true
+	return name
+}
+
+func safeSheetName(value string) string {
+	name := strings.Trim(strings.TrimSpace(value), "'")
+	if name == "" {
+		name = "No_Dep"
+	}
+	re := regexp.MustCompile(`[:\\/?*\[\]]+`)
+	name = re.ReplaceAllString(name, "_")
+	name = strings.Trim(strings.TrimSpace(name), "'")
+	if name == "" {
+		name = "No_Dep"
+	}
+	return truncateSheetName(name, 31)
+}
+
+func truncateSheetName(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
+func (a *app) diskRecordsByHostname(ctx context.Context, hostnames []string) (map[string][]diskRecord, error) {
+	cache := map[string][]diskRecord{}
+	if len(hostnames) == 0 {
+		return cache, nil
+	}
+
+	placeholders := make([]string, len(hostnames))
+	args := make([]any, len(hostnames))
+	for i, hostname := range hostnames {
+		placeholders[i] = fmt.Sprintf("@p%d", i+1)
+		args[i] = hostname
+	}
+
+	query := `SELECT hostname, drive_letter, model, disk_type, total_gb, free_gb, used_gb, Used_percent
+FROM Agent_Disk WHERE hostname IN (` + strings.Join(placeholders, ",") + `) ORDER BY hostname, drive_letter`
+	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	disks := []diskRecord{}
 	for rows.Next() {
+		var hostname string
 		var disk diskRecord
 		var driveLetter, model, diskType sql.NullString
 		var totalGB, freeGB, usedGB, usedPercent sql.NullFloat64
-		if err := rows.Scan(&driveLetter, &model, &diskType, &totalGB, &freeGB, &usedGB, &usedPercent); err != nil {
+		if err := rows.Scan(&hostname, &driveLetter, &model, &diskType, &totalGB, &freeGB, &usedGB, &usedPercent); err != nil {
 			return nil, err
 		}
 		disk.DriveLetter = nullStringPtr(driveLetter)
@@ -441,9 +540,9 @@ FROM Agent_Disk WHERE hostname = @p1 ORDER BY drive_letter`, hostname)
 		disk.FreeGB = nullFloatPtr(freeGB)
 		disk.UsedGB = nullFloatPtr(usedGB)
 		disk.UsedPercent = nullFloatPtr(usedPercent)
-		disks = append(disks, disk)
+		cache[hostname] = append(cache[hostname], disk)
 	}
-	return disks, rows.Err()
+	return cache, rows.Err()
 }
 
 func setRowValues(file *excelize.File, sheet string, row int, values map[string]any) error {
