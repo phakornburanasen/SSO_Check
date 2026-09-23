@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  Crop,
   Download,
   Edit3,
   ExternalLink,
@@ -23,11 +24,13 @@ import {
   ShieldCheck,
   Trash2,
   X,
-  Zap, 
-  Projector, 
-  Video
+  Zap,
+  Projector,
+  Video,
+  ZoomIn,
 } from 'lucide-react'
 import Swal from 'sweetalert2'
+import Cropper, { type Area, type Point } from 'react-easy-crop'
 
 type AgentRecord = {
   id: number
@@ -72,6 +75,21 @@ type PendingImage = {
   name: string
   previewUrl: string
 }
+
+type CropReplaceTarget = { kind: 'pending'; index: number } | { kind: 'existing'; src: string }
+
+type CropQueueItem = {
+  file: File
+  url: string
+  replace?: CropReplaceTarget
+}
+
+const cropAspectPresets: { label: string; value: number | null }[] = [
+  { label: 'เต็มภาพ', value: null },
+  { label: '1:1', value: 1 },
+  { label: '4:3', value: 4 / 3 },
+  { label: '16:9', value: 16 / 9 },
+]
 
 const DEFAULT_API_BASE = `http://${window.location.hostname}:8000/api/SSO_Check`
 const DEFAULT_MUTATION_API_BASE = `http://${window.location.hostname}:10100/api/SSO_Check`
@@ -144,8 +162,17 @@ function App() {
   const [existingImages, setExistingImages] = useState<string[]>([])
   const [removedImages, setRemovedImages] = useState<string[]>([])
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [cropQueue, setCropQueue] = useState<CropQueueItem[]>([])
+  const [cropTotal, setCropTotal] = useState(0)
+  const [crop, setCrop] = useState<Point>({ x: 0, y: 0 })
+  const [zoom, setZoom] = useState(1)
+  const [cropAspect, setCropAspect] = useState<number | null>(null)
+  const [naturalAspect, setNaturalAspect] = useState(4 / 3)
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null)
+  const [cropping, setCropping] = useState(false)
   const [exportAll, setExportAll] = useState(true)
   const [selectedExportChecks, setSelectedExportChecks] = useState<string[]>([])
+  const [hideDriveLetter, setHideDriveLetter] = useState(false)
   const [exportUserCheckOptions, setExportUserCheckOptions] = useState<string[]>([])
   const [assetListUserCheck, setAssetListUserCheck] = useState('')
   const [pageSize, setPageSize] = useState(10)
@@ -160,6 +187,15 @@ function App() {
   useEffect(() => {
     loadExportUserChecks()
   }, [])
+
+  const currentCropItem = cropQueue[0] || null
+
+  useEffect(() => {
+    setCrop({ x: 0, y: 0 })
+    setZoom(1)
+    setCropAspect(null)
+    setCroppedAreaPixels(null)
+  }, [currentCropItem?.url])
 
   const visibleRecords = records.filter((row) => {
     const text = [
@@ -289,7 +325,7 @@ function App() {
     setForm((current) => ({ ...current, [key]: value }))
   }
 
-  async function onImageSelect(files: FileList | null) {
+  function onImageSelect(files: FileList | null) {
     if (!files?.length) return
     const incoming = Array.from(files)
     if (existingImages.length + pendingImages.length + incoming.length > 3) {
@@ -297,12 +333,113 @@ function App() {
       return
     }
 
+    setError('')
+    const items = incoming.map((file) => ({ file, url: URL.createObjectURL(file) }))
+    setCropTotal((current) => current + items.length)
+    setCropQueue((current) => [...current, ...items])
+  }
+
+  function onCropMediaLoaded(size: { width: number; height: number }) {
+    if (size.width && size.height) setNaturalAspect(size.width / size.height)
+  }
+
+  async function buildCompressedFromBlob(blob: Blob, sourceName: string): Promise<PendingImage> {
+    const ext = blob.type === 'image/png' ? 'png' : 'jpg'
+    const baseName = sourceName.replace(/\.[^.]+$/, '') || 'image'
+    const file = new File([blob], `${baseName}.${ext}`, { type: blob.type })
+    return compressImage(file)
+  }
+
+  async function addCroppedToPending(blob: Blob, sourceName: string) {
+    const compressed = await buildCompressedFromBlob(blob, sourceName)
+    setPendingImages((current) => [...current, compressed])
+  }
+
+  async function replacePendingImage(index: number, blob: Blob, sourceName: string) {
+    const compressed = await buildCompressedFromBlob(blob, sourceName)
+    setPendingImages((current) => {
+      const next = [...current]
+      const old = next[index]
+      if (old) URL.revokeObjectURL(old.previewUrl)
+      next[index] = compressed
+      return next
+    })
+  }
+
+  async function replaceExistingImage(src: string, blob: Blob, sourceName: string) {
+    const compressed = await buildCompressedFromBlob(blob, sourceName)
+    setExistingImages((current) => current.filter((item) => item !== src))
+    setRemovedImages((current) => [...current, src])
+    setPendingImages((current) => [...current, compressed])
+  }
+
+  function recropPendingImage(index: number) {
+    const image = pendingImages[index]
+    if (!image) return
+    const url = URL.createObjectURL(image.blob)
+    const item: CropQueueItem = { file: new File([image.blob], image.name, { type: image.blob.type }), url, replace: { kind: 'pending', index } }
+    setCropTotal((current) => current + 1)
+    setCropQueue((current) => [...current, item])
+  }
+
+  async function recropExistingImage(src: string) {
+    setError('')
     try {
-      const compressed = await Promise.all(incoming.map((file) => compressImage(file)))
-      setPendingImages((current) => [...current, ...compressed])
+      const res = await fetch(toImageURL(src))
+      if (!res.ok) throw new Error('โหลดรูปไม่สำเร็จ')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const name = src.split('/').pop() || 'image.jpg'
+      const item: CropQueueItem = { file: new File([blob], name, { type: blob.type || 'image/jpeg' }), url, replace: { kind: 'existing', src } }
+      setCropTotal((current) => current + 1)
+      setCropQueue((current) => [...current, item])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'เตรียมรูปภาพไม่สำเร็จ')
+      setError(err instanceof Error ? err.message : 'โหลดรูปไม่สำเร็จ')
     }
+  }
+
+  function dequeueCropItem() {
+    setCropQueue((current) => {
+      const [used, ...rest] = current
+      if (used) URL.revokeObjectURL(used.url)
+      if (rest.length === 0) setCropTotal(0)
+      return rest
+    })
+  }
+
+  async function confirmCrop() {
+    if (!currentCropItem) return
+    setCropping(true)
+    setError('')
+    try {
+      const area = croppedAreaPixels
+      const blob = area
+        ? await getCroppedImageBlob(currentCropItem.url, area)
+        : await fetch(currentCropItem.url).then((res) => res.blob())
+      const replace = currentCropItem.replace
+      if (replace?.kind === 'pending') {
+        await replacePendingImage(replace.index, blob, currentCropItem.file.name)
+      } else if (replace?.kind === 'existing') {
+        await replaceExistingImage(replace.src, blob, currentCropItem.file.name)
+      } else {
+        await addCroppedToPending(blob, currentCropItem.file.name)
+      }
+      dequeueCropItem()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ตัดรูปไม่สำเร็จ')
+    } finally {
+      setCropping(false)
+    }
+  }
+
+  function skipCropItem() {
+    dequeueCropItem()
+  }
+
+  function cancelCropQueue() {
+    cropQueue.forEach((item) => URL.revokeObjectURL(item.url))
+    setCropQueue([])
+    setCropTotal(0)
   }
 
   function removeExistingImage(src: string) {
@@ -432,6 +569,7 @@ function App() {
       } else {
         selectedExportChecks.forEach((item) => params.append('userCheck', item))
       }
+      if (hideDriveLetter) params.set('hideDrive', '1')
       const res = await fetch(mutationApiURL(`/export${params.toString() ? `?${params}` : ''}`))
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -476,6 +614,11 @@ function App() {
       current.forEach((image) => URL.revokeObjectURL(image.previewUrl))
       return []
     })
+    setCropQueue((current) => {
+      current.forEach((item) => URL.revokeObjectURL(item.url))
+      return []
+    })
+    setCropTotal(0)
   }
 
   return (
@@ -534,6 +677,15 @@ function App() {
               <Download size={17} />
               Export Excel
             </button>
+            <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-md border border-white/75 bg-white/55 px-3 py-2 text-xs font-bold text-slate-700 shadow-sm backdrop-blur">
+              <input
+                type="checkbox"
+                checked={hideDriveLetter}
+                onChange={(event) => setHideDriveLetter(event.target.checked)}
+                className="h-4 w-4 accent-teal-700"
+              />
+              ซ่อนคอลัมน์ Drive Letter ตอน Export
+            </label>
 
             <div className="mt-4 rounded-lg border border-white/70 bg-white/45 p-4 shadow-sm backdrop-blur">
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -651,9 +803,22 @@ function App() {
                       setSearch(event.target.value)
                       setCurrentPage(1)
                     }}
-                    placeholder="ค้นหา Asset List..."
-                    className="h-9 w-full rounded-md border border-white/80 bg-white/75 pl-10 pr-3 text-sm font-semibold outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
+                    placeholder="ค้นหา..."
+                    className="h-9 w-full rounded-md border border-white/80 bg-white/75 pl-10 pr-8 text-sm font-semibold outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
                   />
+                  {search && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearch('')
+                        setCurrentPage(1)
+                      }}
+                      title="ล้างคำค้นหา"
+                      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="whitespace-nowrap text-sm font-bold text-slate-600">User check</span>
@@ -953,10 +1118,22 @@ function App() {
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   {existingImages.map((src) => (
-                    <ImageThumb key={src} src={toImageURL(src)} onView={() => setViewerImage(toImageURL(src))} onRemove={() => removeExistingImage(src)} />
+                    <ImageThumb
+                      key={src}
+                      src={toImageURL(src)}
+                      onView={() => setViewerImage(toImageURL(src))}
+                      onRemove={() => removeExistingImage(src)}
+                      onCrop={() => recropExistingImage(src)}
+                    />
                   ))}
                   {pendingImages.map((image, index) => (
-                    <ImageThumb key={image.previewUrl} src={image.previewUrl} onView={() => setViewerImage(image.previewUrl)} onRemove={() => removePendingImage(index)} />
+                    <ImageThumb
+                      key={image.previewUrl}
+                      src={image.previewUrl}
+                      onView={() => setViewerImage(image.previewUrl)}
+                      onRemove={() => removePendingImage(index)}
+                      onCrop={() => recropPendingImage(index)}
+                    />
                   ))}
                 </div>
                 </section>
@@ -983,6 +1160,87 @@ function App() {
               <X size={26} />
             </button>
             <img src={viewerImage} alt="" className="max-h-[88vh] w-full rounded-lg object-contain shadow-2xl" />
+          </div>
+        </div>
+      )}
+
+      {currentCropItem && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="flex w-full max-w-lg flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.4)]">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3">
+              <div className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
+                <Crop size={16} className="text-teal-700" />
+                ครอบตัดรูปภาพ
+                {cropTotal > 1 && (
+                  <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-bold text-teal-700">
+                    {cropTotal - cropQueue.length + 1}/{cropTotal}
+                  </span>
+                )}
+              </div>
+              <button type="button" onClick={cancelCropQueue} className="rounded-md p-1.5 text-slate-500 hover:bg-white hover:text-slate-900" title="ยกเลิกทั้งหมด">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="relative h-72 w-full bg-slate-900 sm:h-96">
+              <Cropper
+                image={currentCropItem.url}
+                crop={crop}
+                zoom={zoom}
+                aspect={cropAspect ?? naturalAspect}
+                onCropChange={setCrop}
+                onZoomChange={setZoom}
+                onCropComplete={(_area, areaPixels) => setCroppedAreaPixels(areaPixels)}
+                onMediaLoaded={onCropMediaLoaded}
+              />
+            </div>
+
+            <div className="space-y-3 px-5 py-4">
+              <div className="flex flex-wrap gap-1.5">
+                {cropAspectPresets.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => setCropAspect(preset.value)}
+                    className={`h-8 rounded-md border px-3 text-xs font-bold transition ${
+                      cropAspect === preset.value
+                        ? 'border-teal-600 bg-teal-700 text-white'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-teal-300 hover:bg-teal-50'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <ZoomIn size={16} className="shrink-0 text-slate-500" />
+                <input
+                  type="range"
+                  min={1}
+                  max={4}
+                  step={0.05}
+                  value={zoom}
+                  onChange={(event) => setZoom(Number(event.target.value))}
+                  className="h-1.5 w-full accent-teal-700"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:justify-end">
+              <button type="button" onClick={skipCropItem} disabled={cropping} className="h-10 rounded-md px-4 text-sm font-bold text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60">
+                ข้ามรูปนี้
+              </button>
+              <button
+                type="button"
+                onClick={confirmCrop}
+                disabled={cropping}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-teal-700 px-5 text-sm font-extrabold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {cropping ? <Loader2 className="animate-spin" size={16} /> : <Crop size={16} />}
+                ตัดและเพิ่มรูป
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1065,13 +1323,18 @@ function getPaginationItems(currentPage: number, totalPages: number): Array<numb
   })
 }
 
-function ImageThumb({ src, onView, onRemove }: { src: string; onView: () => void; onRemove: () => void }) {
+function ImageThumb({ src, onView, onRemove, onCrop }: { src: string; onView: () => void; onRemove: () => void; onCrop?: () => void }) {
   return (
     <div className="relative">
       <button type="button" onClick={onView} className="block rounded-md border border-white/80 bg-white/55 p-0.5 shadow-sm backdrop-blur hover:border-teal-500" title="ดูรูป">
         <img src={src} alt="" className="h-20 w-20 rounded object-cover" />
         <Eye className="absolute bottom-2 left-2 rounded bg-white/90 p-1 text-slate-700" size={22} />
       </button>
+      {onCrop && (
+        <button type="button" onClick={onCrop} className="absolute -bottom-2 -right-2 rounded-full bg-teal-700 p-1 text-white shadow hover:bg-teal-800" title="ครอบตัดรูป">
+          <Crop size={14} />
+        </button>
+      )}
       <button type="button" onClick={onRemove} className="absolute -right-2 -top-2 rounded-full bg-red-600 p-1 text-white shadow hover:bg-red-700" title="ลบรูป">
         <X size={14} />
       </button>
@@ -1149,6 +1412,38 @@ function formatInsertedAt(value?: string | null) {
   if (!match) return value
   const [, year, month, day, hour, minute, second] = match
   return `${day}/${month}/${Number(year) + 543} ${hour}:${minute}:${second}`
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('โหลดรูปไม่สำเร็จ'))
+    image.src = src
+  })
+}
+
+async function getCroppedImageBlob(imageSrc: string, area: Area): Promise<Blob> {
+  const image = await loadImageElement(imageSrc)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(area.width))
+  canvas.height = Math.max(1, Math.round(area.height))
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('ตัดรูปไม่สำเร็จ')
+  context.drawImage(image, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height)
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error('ตัดรูปไม่สำเร็จ'))
+          return
+        }
+        resolve(blob)
+      },
+      'image/jpeg',
+      0.92,
+    )
+  })
 }
 
 function compressImage(file: File): Promise<PendingImage> {

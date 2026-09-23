@@ -109,11 +109,11 @@ func main() {
 	mux.HandleFunc("/export", a.withCORS(a.exportExcel))
 	mux.HandleFunc("/api/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/export", a.withCORS(a.exportExcel))
-	mux.Handle("/uploads/", http.StripPrefix("/uploads/", uploadFiles))
+	mux.HandleFunc("/uploads/", a.withCORS(http.StripPrefix("/uploads/", uploadFiles).ServeHTTP))
 	mux.HandleFunc("/api/SSO_Check/health", a.withCORS(a.health))
 	mux.HandleFunc("/api/SSO_Check/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/SSO_Check/export", a.withCORS(a.exportExcel))
-	mux.Handle("/api/SSO_Check/uploads/", http.StripPrefix("/api/SSO_Check/uploads/", uploadFiles))
+	mux.HandleFunc("/api/SSO_Check/uploads/", a.withCORS(http.StripPrefix("/api/SSO_Check/uploads/", uploadFiles).ServeHTTP))
 	a.mountFrontend(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/SSO_Check/", http.StatusFound)
@@ -206,7 +206,8 @@ func (a *app) exportExcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, err := a.buildExcel(r.Context(), records)
+	hideDrive := r.URL.Query().Get("hideDrive") == "1"
+	file, err := a.buildExcel(r.Context(), records, hideDrive)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -279,7 +280,7 @@ func selectedUserChecks(r *http.Request) []string {
 	return values
 }
 
-func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File, error) {
+func (a *app) buildExcel(ctx context.Context, records []record, hideDrive bool) (*excelize.File, error) {
 	const sheet = "SSO_Check"
 	file := excelize.NewFile()
 	defaultSheet := file.GetSheetName(file.GetActiveSheetIndex())
@@ -309,7 +310,7 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 		return nil, err
 	}
 
-	if err := a.writeExcelSheet(file, sheet, records, diskCache, headerStyle, bodyStyle); err != nil {
+	if err := a.writeExcelSheet(file, sheet, records, diskCache, headerStyle, bodyStyle, hideDrive); err != nil {
 		return nil, err
 	}
 
@@ -332,7 +333,7 @@ func (a *app) buildExcel(ctx context.Context, records []record) (*excelize.File,
 		if _, err := file.NewSheet(depSheet); err != nil {
 			return nil, err
 		}
-		if err := a.writeExcelSheet(file, depSheet, depGroups[dep], diskCache, headerStyle, bodyStyle); err != nil {
+		if err := a.writeExcelSheet(file, depSheet, depGroups[dep], diskCache, headerStyle, bodyStyle, hideDrive); err != nil {
 			return nil, err
 		}
 	}
@@ -365,7 +366,7 @@ func excelStyles(file *excelize.File) (int, int, error) {
 	return headerStyle, bodyStyle, nil
 }
 
-func (a *app) writeExcelSheet(file *excelize.File, sheet string, records []record, diskCache map[string][]diskRecord, headerStyle, bodyStyle int) error {
+func (a *app) writeExcelSheet(file *excelize.File, sheet string, records []record, diskCache map[string][]diskRecord, headerStyle, bodyStyle int, hideDrive bool) error {
 	headers := map[string]string{
 		"A3": "No.",
 		"B3": "Asset No",
@@ -466,6 +467,12 @@ func (a *app) writeExcelSheet(file *excelize.File, sheet string, records []recor
 		ActivePane:  "bottomLeft",
 	}); err != nil {
 		return err
+	}
+
+	if hideDrive {
+		if err := file.SetColVisible(sheet, "M:S", false); err != nil {
+			return err
+		}
 	}
 
 	return nil

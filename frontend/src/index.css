@@ -22,6 +22,14 @@ textarea {
   font: inherit;
 }
 
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 .sso-delete-alert {
   width: min(420px, calc(100vw - 32px));
   border: 1px solid rgba(226, 232, 240, 0.95);
