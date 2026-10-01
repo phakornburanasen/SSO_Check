@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useId, useMemo, useState } from 'react'
 import {
   Camera,
   Check,
@@ -21,7 +21,6 @@ import {
   ScanBarcode,
   Search,
   Server,
-  ShieldCheck,
   Trash2,
   X,
   Zap,
@@ -31,6 +30,19 @@ import {
 } from 'lucide-react'
 import Swal from 'sweetalert2'
 import Cropper, { type Area, type Point } from 'react-easy-crop'
+import { Button } from '@/components/ui/button'
+import { Card, CardHeader, CardTitle, CardDescription, CardAction, CardContent, CardFooter } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@/components/ui/field'
+import { InputGroup, InputGroupInput, InputGroupAddon, InputGroupButton } from '@/components/ui/input-group'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from '@/components/ui/empty'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { cn } from '@/lib/utils'
 
 type AgentRecord = {
   id: number
@@ -120,14 +132,8 @@ const typeLabels: Record<string, string> = {
   VC: 'Video Conference',
 }
 
-const badgeClasses: Record<string, string> = {
-  C: 'bg-cyan-50 text-cyan-700 ring-cyan-200',
-  P: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  M: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
-  U: 'bg-amber-50 text-amber-700 ring-amber-200',
-  S: 'bg-rose-50 text-rose-700 ring-rose-200',
-  J: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
-  VC: 'bg-amber-50 text-amber-700 ring-amber-200',
+const badgeVariants: Record<string, 'info' | 'success' | 'violet' | 'warning' | 'rose'> = {
+  C: 'info', P: 'success', M: 'violet', U: 'warning', S: 'rose', J: 'violet', VC: 'warning',
 }
 
 const windowsOptions = ['Windows 10 Home','Windows 11 Home','Windows XP Pro', 'Windows 7 Pro', 'Windows 8.1 Pro', 'Windows 10 Pro', 'Windows 11 Pro']
@@ -143,8 +149,8 @@ const officeOptions = [
   'Microsoft 365 STD',
 ]
 
-const inputClass =
-  'h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 shadow-[inset_0_1px_2px_rgba(15,23,42,0.06),0_1px_1px_rgba(15,23,42,0.03)] outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-100'
+const inputClass = 'native-select'
+const SAVE_NOTICE_MS = 5000
 const pageSizeOptions = [10, 25, 50, 100]
 
 function App() {
@@ -187,6 +193,13 @@ function App() {
   useEffect(() => {
     loadExportUserChecks()
   }, [])
+
+  // Success notices fade out on their own; errors stay until the next action.
+  useEffect(() => {
+    if (!message) return
+    const timer = window.setTimeout(() => setMessage(''), SAVE_NOTICE_MS)
+    return () => window.clearTimeout(timer)
+  }, [message])
 
   const currentCropItem = cropQueue[0] || null
 
@@ -477,7 +490,9 @@ function App() {
       const result = await res.json()
       if (!res.ok || !result.success) throw new Error(result.message || result.error || 'บันทึกไม่สำเร็จ')
 
+      const savedName = form.hostname || form.asset_no || (form.id ? `#${form.id}` : '')
       setMessage(result.message || 'บันทึกสำเร็จ')
+      showSavedToast(form.action === 'create' ? 'เพิ่มอุปกรณ์เรียบร้อย' : 'บันทึกการแก้ไขเรียบร้อย', savedName)
       closeModal()
       await loadRecords(filter, { silent: true })
       await loadExportUserChecks()
@@ -622,688 +637,290 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(135deg,#eef2f7_0%,#f8fafc_46%,#e7f3f1_100%)] p-2 text-slate-950 lg:h-screen lg:overflow-hidden">
-      <div className="flex flex-col gap-2 lg:h-full lg:min-h-0">
-        <header className="flex h-14 shrink-0 items-center justify-between rounded-lg border border-white/70 bg-white/70 px-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-gradient-to-br from-teal-500 to-cyan-600 text-white shadow-sm">
-              <ShieldCheck size={21} />
-            </div>
-            <div>
-              <h1 className="text-[15px] font-extrabold leading-4">SSO CHECK</h1>
-              <p className="text-xs font-semibold text-slate-500">Agent workspace</p>
+    <div className="min-h-screen bg-background text-foreground lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden">
+      <header className="workspace-header shrink-0">
+        <div className="mx-auto flex min-h-20 w-full max-w-[1920px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-4 sm:gap-6">
+            <img src={`${import.meta.env.BASE_URL}tnlx.svg`} alt="TNLX" className="h-8 w-24 shrink-0 object-contain" />
+            <Separator orientation="vertical" className="h-7! opacity-25" />
+            <div className="min-w-0">
+              <h1 className="text-sm font-semibold tracking-wide sm:text-base">SSO CHECK</h1>
+              <p className="header-caption mt-0.5 hidden text-xs sm:block">Asset management workspace</p>
             </div>
           </div>
-
-          <nav className="hidden h-12 min-w-[264px] items-center justify-center gap-1 rounded-md border border-white/70 bg-white/45 px-2 shadow-inner sm:flex">
+          <nav aria-label="เมนูหลัก" className="hidden items-center gap-2 md:flex">
             {['Tools', 'Assets', 'Reports'].map((item, index) => (
-              <button
-                key={item}
-                type="button"
-                className={`h-9 rounded-md px-5 text-sm font-bold ${index === 1 ? 'bg-white/90 text-teal-700 shadow-sm' : 'text-slate-600 hover:bg-white/70'}`}
-              >
-                {item}
-              </button>
+              <Button key={item} type="button" variant={index === 1 ? 'nav-active' : 'nav'} aria-current={index === 1 ? 'page' : undefined}>
+                {index === 1 && <LayoutGrid data-icon="inline-start" />}{item}
+              </Button>
             ))}
           </nav>
-
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-teal-50">
-              <Circle size={8} className="fill-teal-500 text-teal-500" />
-            </span>
-            {loading ? 'Loading assets' : 'Ready'}
+          <div className="header-status flex shrink-0 items-center gap-2 text-xs" role="status">
+            <Circle size={7} className="fill-current" />
+            <span>{loading ? 'Loading assets' : 'Ready'}</span>
           </div>
-        </header>
+        </div>
+      </header>
 
-        <main className="grid grid-cols-1 gap-2 lg:min-h-0 lg:flex-1 lg:grid-cols-[340px_minmax(0,1fr)]">
-          <aside className="rounded-lg border border-white/70 bg-white/62 p-5 shadow-[0_18px_46px_rgba(15,23,42,0.10)] backdrop-blur-xl lg:min-h-0 lg:overflow-y-auto">
-            <p className="text-xs font-extrabold uppercase tracking-wide text-teal-700">Agent TNLX</p>
-            <h2 className="mt-3 text-3xl font-extrabold tracking-tight">Check Asset</h2>
-            <p className="mt-2 text-sm text-slate-600">จัดการข้อมูลเครื่องและอุปกรณ์ในระบบ SSO</p>
-
-            <button
-              type="button"
-              onClick={openCreate}
-              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-md bg-teal-700 px-4 text-sm font-extrabold text-white shadow-[0_12px_24px_rgba(15,118,110,0.22)] hover:bg-teal-800"
-            >
-              <Plus size={18} />
-              เพิ่มอุปกรณ์
-            </button>
-            <button
-              type="button"
-              onClick={exportExcel}
-              className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-md border border-teal-200/80 bg-white/70 px-4 text-sm font-extrabold text-teal-800 shadow-sm backdrop-blur hover:bg-teal-50/80"
-            >
-              <Download size={17} />
-              Export Excel
-            </button>
-            <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-md border border-white/75 bg-white/55 px-3 py-2 text-xs font-bold text-slate-700 shadow-sm backdrop-blur">
-              <input
-                type="checkbox"
-                checked={hideDriveLetter}
-                onChange={(event) => setHideDriveLetter(event.target.checked)}
-                className="h-4 w-4 accent-teal-700"
-              />
-              ซ่อนคอลัมน์ Drive Letter ตอน Export
-            </label>
-
-            <div className="mt-4 rounded-lg border border-white/70 bg-white/45 p-4 shadow-sm backdrop-blur">
+      <main className="mx-auto grid w-full max-w-[1920px] min-w-0 grid-cols-1 gap-5 p-4 sm:p-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[300px_minmax(0,1fr)] lg:p-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <aside aria-label="จัดการอุปกรณ์และการส่งออก" className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+          <Card>
+            <CardHeader>
+              <p className="eyebrow">AGENT TNLX</p>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight">Check Asset</h2>
+              <CardDescription>จัดการข้อมูลเครื่องและอุปกรณ์ในระบบ SSO</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-5">
+              <div className="flex flex-col gap-2.5">
+                <Button type="button" size="lg" onClick={openCreate} className="w-full"><Plus data-icon="inline-start" />เพิ่มอุปกรณ์</Button>
+                <Button type="button" variant="outline" onClick={exportExcel} className="w-full"><Download data-icon="inline-start" />Export Excel</Button>
+                <label className="check-option text-xs">
+                  <input type="checkbox" checked={hideDriveLetter} onChange={(event) => setHideDriveLetter(event.target.checked)} />
+                  ซ่อนคอลัมน์ Drive Letter ตอน Export
+                </label>
+              </div>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <Stat label="ทั้งหมด" value={stats.total} />
                 <Stat label="Computer" value={stats.computers} />
                 <Stat label="อื่น ๆ" value={stats.other} />
               </div>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-white/70 bg-white/50 p-4 shadow-sm backdrop-blur">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                <h3 className="text-sm font-extrabold">ประเภท</h3>
-                <button type="button" onClick={() => loadRecords()} className="rounded-md p-1.5 text-slate-500 hover:bg-white/70" title="Refresh">
-                  <RefreshCw size={16} />
-                </button>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {typeOptions.map((item) => {
-                  const Icon = item.icon
-                  const active = filter === item.value
-                  return (
-                    <button
-                      key={item.value || 'all'}
-                      type="button"
-                      onClick={() => {
-                        setFilter(item.value)
-                        setCurrentPage(1)
-                      }}
-                      className={`flex h-16 flex-col items-center justify-center gap-1 rounded-md border text-xs font-extrabold transition ${
-                        active
-                          ? 'border-teal-500 bg-teal-50/85 text-teal-800 shadow-sm ring-2 ring-teal-100'
-                          : 'border-white/75 bg-white/55 text-slate-700 shadow-sm backdrop-blur hover:border-teal-300 hover:bg-white/75'
-                      }`}
-                    >
-                      <Icon size={19} />
-                      {item.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-white/70 bg-white/50 p-4 shadow-sm backdrop-blur">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                <h3 className="text-sm font-extrabold">Export Scope</h3>
-                <span className="text-xs font-semibold text-slate-500">{exportAll ? 'ทั้งหมด' : `${selectedExportChecks.length} selected`}</span>
-              </div>
-              <div className="mt-3 space-y-2">
-                <label className="flex cursor-pointer items-center gap-2 rounded-md border border-white/75 bg-white/55 px-3 py-2 text-sm font-bold text-slate-700 shadow-sm backdrop-blur">
-                  <input
-                    type="checkbox"
-                    checked={exportAll}
-                    onChange={(event) => {
-                      setExportAll(event.target.checked)
-                      if (event.target.checked) setSelectedExportChecks([])
-                    }}
-                    className="h-4 w-4 accent-teal-700"
-                  />
-                  Export ทั้งหมด
-                </label>
-                <div className="max-h-36 space-y-2 overflow-y-auto pr-1">
-                  {userCheckOptions.length ? (
-                    userCheckOptions.map((item) => (
-                      <label key={item} className="flex cursor-pointer items-center gap-2 rounded-md border border-white/75 bg-white/60 px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm backdrop-blur hover:bg-white/85">
-                        <input
-                          type="checkbox"
-                          checked={!exportAll && selectedExportChecks.includes(item)}
-                          onChange={() => toggleExportUserCheck(item)}
-                          className="h-4 w-4 accent-teal-700"
-                        />
-                        {item}
+              <Separator />
+              <section aria-labelledby="asset-types-title">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 id="asset-types-title" className="text-sm font-semibold">ประเภทอุปกรณ์</h3>
+                  <Button type="button" variant="ghost" size="icon-sm" onClick={() => loadRecords()} title="Refresh" aria-label="รีเฟรชประเภทอุปกรณ์"><RefreshCw /></Button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {typeOptions.map((item) => {
+                    const Icon = item.icon
+                    return (
+                      <Button key={item.value || 'all'} type="button" variant={filter === item.value ? 'secondary' : 'outline'} aria-pressed={filter === item.value}
+                        onClick={() => { setFilter(item.value); setCurrentPage(1) }} className="h-16 flex-col gap-1.5 px-1">
+                        <Icon data-icon="inline-start" />{item.label}
+                      </Button>
+                    )
+                  })}
+                </div>
+              </section>
+              <Separator />
+              <FieldSet>
+                <FieldLegend variant="label" className="mb-3 flex w-full items-center justify-between gap-2">
+                  <span>Export Scope</span>
+                  <span className="text-xs font-normal text-muted-foreground">{exportAll ? 'ส่งออกข้อมูลทั้งหมด' : `เลือก ${selectedExportChecks.length} User check`}</span>
+                </FieldLegend>
+                <FieldGroup className="gap-2">
+                  <label className="check-option">
+                    <input type="checkbox" checked={exportAll} onChange={(event) => { setExportAll(event.target.checked); if (event.target.checked) setSelectedExportChecks([]) }} />
+                    Export ทั้งหมด
+                  </label>
+                  <div className="flex max-h-36 flex-col gap-2 overflow-y-auto pr-1">
+                    {userCheckOptions.length ? userCheckOptions.map((item) => (
+                      <label key={item} className="check-option">
+                        <input type="checkbox" checked={!exportAll && selectedExportChecks.includes(item)} onChange={() => toggleExportUserCheck(item)} />{item}
                       </label>
-                    ))
-                  ) : (
-                    <p className="rounded-md bg-white/55 px-3 py-2 text-xs font-semibold text-slate-500">ยังไม่มี user_check ให้เลือก</p>
-                  )}
-                </div>
-              </div>
-            </div>
+                    )) : <p className="text-xs text-muted-foreground">ยังไม่มี user_check ให้เลือก</p>}
+                  </div>
+                </FieldGroup>
+              </FieldSet>
+            </CardContent>
+            <CardFooter className="gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary"><Server size={18} /></div>
+              <div className="min-w-0"><p className="eyebrow">SESSION</p><p className="mt-1 truncate text-sm font-medium">{userCheck || '-'} <span className="ml-1 text-xs font-normal text-muted-foreground">User check</span></p></div>
+            </CardFooter>
+          </Card>
+        </aside>
 
-            <div className="mt-4 rounded-lg border border-white/70 bg-white/50 p-4 shadow-sm backdrop-blur">
-              <h3 className="text-sm font-extrabold">Session</h3>
-              <div className="mt-3 flex items-center gap-3 rounded-md border border-white/70 bg-white/55 p-3 shadow-inner">
-                <Server size={18} className="text-teal-700" />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold">{userCheck || '-'}</p>
-                  <p className="text-xs text-slate-500">User check</p>
-                </div>
-              </div>
-            </div>
-          </aside>
-
-          <section className="flex flex-col rounded-lg border border-white/70 bg-white/58 shadow-[0_18px_46px_rgba(15,23,42,0.10)] backdrop-blur-xl lg:min-h-0 lg:overflow-hidden">
-            <div className="flex shrink-0 flex-col gap-3 border-b border-white/70 bg-white/62 px-4 py-3 backdrop-blur xl:flex-row xl:items-center xl:justify-between">
+        <Card className="min-w-0 gap-0 lg:min-h-0 lg:overflow-hidden">
+          <CardHeader className="shrink-0 gap-4 pb-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-extrabold leading-5">Asset List</h2>
-                  {refreshing && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-teal-100 bg-teal-50 px-2 py-0.5 text-[11px] font-bold text-teal-700">
-                      <Loader2 className="animate-spin" size={12} />
-                      Sync
-                    </span>
-                  )}
+                <p className="eyebrow">ASSET WORKSPACE</p>
+                <div className="mt-1 flex items-center gap-3"><h2 className="text-xl font-semibold tracking-tight">Asset List</h2><Badge variant="secondary">{visibleRecords.length} รายการ</Badge>
+                  {refreshing && <Badge variant="outline"><Loader2 className="animate-spin" />Sync</Badge>}
                 </div>
-                <p className="text-xs font-semibold text-slate-500">
-                  {visibleRecords.length} รายการ {filter ? `ใน ${typeLabels[filter]}` : 'ทั้งหมด'} {assetListUserCheck ? ` / User Check ${assetListUserCheck}` : ''}
-                </p>
+                <CardDescription className="mt-1">{filter ? typeLabels[filter] : 'อุปกรณ์ทั้งหมด'}{assetListUserCheck ? ` / User Check ${assetListUserCheck}` : ''}</CardDescription>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="relative w-full sm:w-72 xl:w-80">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-                  <input
-                    value={search}
-                    onChange={(event) => {
-                      setSearch(event.target.value)
-                      setCurrentPage(1)
-                    }}
-                    placeholder="ค้นหา..."
-                    className="h-9 w-full rounded-md border border-white/80 bg-white/75 pl-10 pr-8 text-sm font-semibold outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearch('')
-                        setCurrentPage(1)
-                      }}
-                      title="ล้างคำค้นหา"
-                      className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="whitespace-nowrap text-sm font-bold text-slate-600">User check</span>
-                  <select
-                    value={assetListUserCheck}
-                    onChange={(event) => {
-                      setAssetListUserCheck(event.target.value)
-                      setCurrentPage(1)
-                    }}
-                    className="h-9 w-full rounded-md border border-white/80 bg-white/75 px-3 text-sm font-bold text-slate-700 outline-none shadow-inner backdrop-blur focus:border-teal-500 focus:ring-4 focus:ring-teal-100 sm:w-44"
-                  >
-                    <option value="">ทั้งหมด</option>
-                    {userCheckOptions.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <a
-                  href={SAP_SEARCH_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex h-9 items-center gap-1.5 rounded-md border border-teal-200/80 bg-white/70 px-3 text-sm font-bold text-teal-800 shadow-sm backdrop-blur hover:bg-teal-50/80"
-                >
-                  <ExternalLink size={15} />
-                  ค้นหาข้อมูลจาก SAP
-                </a>
-                <button type="button" onClick={() => loadRecords()} className="h-9 rounded-md border border-white/70 bg-white/65 px-3 text-sm font-bold shadow-sm backdrop-blur hover:bg-white/90">
-                  Refresh
-                </button>
-                <button type="button" onClick={openCreate} className="h-9 rounded-md bg-teal-700 px-3 text-sm font-bold text-white hover:bg-teal-800">
-                  Add
-                </button>
+              <div className="flex flex-wrap gap-2">
+                <Button asChild variant="outline" size="sm"><a href={SAP_SEARCH_URL} target="_blank" rel="noopener noreferrer"><ExternalLink data-icon="inline-start" />ค้นหาข้อมูลจาก SAP</a></Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => loadRecords()}><RefreshCw data-icon="inline-start" />Refresh</Button>
+                <Button type="button" size="sm" onClick={openCreate}><Plus data-icon="inline-start" />Add</Button>
               </div>
             </div>
-
-            {(error || message) && (
-              <div className={`mx-4 mt-3 flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${error ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-                {error ? <X size={16} /> : <Check size={16} />}
-                {error || message}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <InputGroup className="sm:max-w-lg">
+                <InputGroupInput aria-label="ค้นหาอุปกรณ์" value={search} onChange={(event) => { setSearch(event.target.value); setCurrentPage(1) }} placeholder="ค้นหา..." />
+                <InputGroupAddon><Search /></InputGroupAddon>
+                {search && <InputGroupAddon align="inline-end"><InputGroupButton size="icon-xs" title="ล้างคำค้นหา" aria-label="ล้างคำค้นหา" onClick={() => { setSearch(''); setCurrentPage(1) }}><X /></InputGroupButton></InputGroupAddon>}
+              </InputGroup>
+              <div className="flex shrink-0 items-center gap-3">
+                <label htmlFor="asset-user-check" className="whitespace-nowrap text-sm text-muted-foreground">User check</label>
+                <select id="asset-user-check" value={assetListUserCheck} onChange={(event) => { setAssetListUserCheck(event.target.value); setCurrentPage(1) }} className={cn(inputClass, 'flex-1 sm:w-44')}>
+                  <option value="">ทั้งหมด</option>{userCheckOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
               </div>
-            )}
-
-            <div className="overflow-auto bg-slate-100/45 lg:min-h-0 lg:flex-1">
-              <table className="w-full min-w-[1120px] text-left text-sm">
-                <thead className="sticky top-0 z-10 bg-white/78 text-xs font-extrabold uppercase tracking-wide text-slate-500 backdrop-blur">
-                  <tr>
-                    {['#', 'Asset No', 'Hostname', 'IP', 'Username', 'Type', 'Dep', 'Windows', 'CPU', 'RAM', 'Office', 'Detail', 'Users', 'Images', 'Check', 'Action'].map((head) => (
-                      <th key={head} className="whitespace-nowrap border-b border-slate-200 px-3 py-3">
-                        {head}
-                      </th>
-                    ))}
+            </div>
+          </CardHeader>
+          <Separator />
+          {(error || message) && <div className="shrink-0 px-5 pt-4"><Alert variant={error ? 'destructive' : 'default'}>{error ? <X /> : <Check />}<AlertDescription>{error || message}</AlertDescription></Alert></div>}
+          <CardContent className="min-w-0 overflow-auto p-0 lg:min-h-0 lg:flex-1">
+            <table className="asset-table w-full min-w-[1120px] text-left text-sm" aria-label="รายการอุปกรณ์">
+              <thead className="sticky top-0 z-10">
+                <tr>{['#', 'Asset No', 'Hostname', 'IP', 'Username', 'Type', 'Dep', 'Windows', 'CPU', 'RAM', 'Office', 'Detail', 'Users', 'Images', 'Check', 'Action'].map((head) => <th key={head} scope="col">{head}</th>)}</tr>
+              </thead>
+              <tbody>
+                {loading && records.length === 0 ? <tr><td colSpan={16}><div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" role="status"><Loader2 className="animate-spin text-primary" size={26} />กำลังโหลดข้อมูล...</div></td></tr>
+                : pagedRecords.length === 0 ? <tr><td colSpan={16}><Empty><EmptyHeader><EmptyMedia variant="icon"><Search /></EmptyMedia><EmptyTitle>ไม่พบข้อมูล</EmptyTitle><EmptyDescription>ลองเปลี่ยนคำค้นหาหรือตัวกรองอุปกรณ์</EmptyDescription></EmptyHeader></Empty></td></tr>
+                : pagedRecords.map((row, index) => (
+                  <tr key={row.id}>
+                    <td className="cell-index">{pageStart + index + 1}</td>
+                    <td className="font-medium">{row.asset_no || '-'}</td>
+                    <td className="font-semibold text-foreground">{row.hostname || '-'}</td>
+                    <td>{row.ip_address || '-'}</td><td>{row.username || '-'}</td>
+                    <td><Badge variant={badgeVariants[row.Status_mac || ''] || 'outline'}>{typeLabels[row.Status_mac || ''] || '-'}</Badge></td>
+                    <td>{row.Dep || '-'}</td><td>{row.windows_version || '-'}</td>
+                    <td className="max-w-[150px] truncate" title={row.cpu_name || undefined}>{row.cpu_name || '-'}</td>
+                    <td className="text-center">{row.ram_total_gb ?? '-'}</td>
+                    <td className="max-w-[150px] truncate" title={row.Office_Version || undefined}>{row.Office_Version || '-'}</td>
+                    <td className="max-w-[130px] truncate" title={row.Detail || undefined}>{row.Detail || '-'}</td>
+                    <td>{row.Users || '-'}</td>
+                    <td><div className="flex justify-center gap-1.5">{splitImages(row.img_png).length ? splitImages(row.img_png).slice(0, 3).map((src) => (
+                      <Button key={src} type="button" variant="ghost" size="icon" className="size-11 overflow-hidden p-0" onClick={() => setViewerImage(toImageURL(src))} aria-label={`ดูรูป ${row.hostname || row.id}`}><img src={toImageURL(src)} alt="รูปอุปกรณ์" className="size-full rounded-lg border object-cover" /></Button>
+                    )) : '-'}</div></td>
+                    <td>{row.user_check || '-'}</td>
+                    <td><div className="flex justify-center gap-1"><Button type="button" variant="ghost" size="icon-sm" title="แก้ไข" aria-label={`แก้ไข ${row.hostname || row.id}`} onClick={() => openEdit(row.id)}><Edit3 /></Button><Button type="button" variant="destructive" size="icon-sm" title="ลบ" aria-label={`ลบ ${row.hostname || row.id}`} onClick={() => deleteRecord(row)}><Trash2 /></Button></div></td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200/70 bg-white/68 backdrop-blur">
-                  {loading && records.length === 0 ? (
-                    <tr>
-                      <td colSpan={16} className="py-16 text-center text-slate-500">
-                        <Loader2 className="mx-auto mb-2 animate-spin text-teal-700" size={26} />
-                        กำลังโหลดข้อมูล...
-                      </td>
-                    </tr>
-                  ) : visibleRecords.length === 0 ? (
-                    <tr>
-                      <td colSpan={16} className="py-16 text-center text-slate-500">
-                        ไม่พบข้อมูล
-                      </td>
-                    </tr>
-                  ) : (
-                    pagedRecords.map((row, index) => (
-                      <tr key={row.id} className="hover:bg-white/85">
-                        <td className="px-3 py-3 font-bold text-slate-500">{pageStart + index + 1}</td>
-                        <td className="px-3 py-3 font-bold text-slate-700">{row.asset_no || '-'}</td>
-                        <td className="px-3 py-3 font-extrabold text-slate-950">{row.hostname || '-'}</td>
-                        <td className="px-3 py-3 text-slate-600">{row.ip_address || '-'}</td>
-                        <td className="px-3 py-3 text-slate-600">{row.username || '-'}</td>
-                        <td className="px-3 py-3">
-                          <span className={`rounded-full px-2 py-1 text-xs font-extrabold ring-1 ${badgeClasses[row.Status_mac || ''] || 'bg-slate-50 text-slate-600 ring-slate-200'}`}>
-                            {typeLabels[row.Status_mac || ''] || row.Status_mac || '-'}
-                          </span>
-                        </td>
-                      <td className="px-3 py-3 text-xs text-slate-600">{row.Dep || '-'}</td>
-                      <td className="px-3 py-3 text-xs text-slate-600">{row.windows_version || '-'}</td>
-                        <td className="max-w-[150px] truncate px-3 py-3 text-xs text-slate-600">{row.cpu_name || '-'}</td>
-                        <td className="px-3 py-3 text-center text-slate-700">{row.ram_total_gb ?? '-'}</td>
-                        <td className="max-w-[150px] truncate px-3 py-3 text-xs text-slate-600">{row.Office_Version || '-'}</td>
-                        <td className="max-w-[130px] truncate px-3 py-3 text-xs text-slate-600">{row.Detail || '-'}</td>
-                        <td className="px-3 py-3 text-xs text-slate-600">{row.Users || '-'}</td>
-                      <td className="px-3 py-3">
-                          <div className="flex justify-center gap-1">
-                            {splitImages(row.img_png).length ? (
-                              splitImages(row.img_png).map((src) => (
-                                <button key={src} type="button" onClick={() => setViewerImage(toImageURL(src))} className="group relative">
-                                  <img src={toImageURL(src)} alt="" className="h-11 w-11 rounded-md border border-slate-200 object-cover group-hover:border-teal-500" />
-                                </button>
-                              ))
-                            ) : (
-                              <span className="text-slate-300">-</span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-xs text-slate-600">{row.user_check || '-'}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex justify-center gap-1">
-                            <button type="button" title="แก้ไข" onClick={() => openEdit(row.id)} className="rounded-md p-2 text-sky-700 hover:bg-sky-50">
-                              <Edit3 size={16} />
-                            </button>
-                            <button type="button" title="ลบ" onClick={() => deleteRecord(row)} className="rounded-md p-2 text-red-600 hover:bg-red-50">
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex shrink-0 flex-col gap-3 border-t border-white/70 bg-white/72 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm font-semibold text-slate-600">
-                Showing <span className="font-extrabold text-slate-950">{visibleRecords.length === 0 ? 0 : pageStart + 1}</span>
-                {'-'}
-                <span className="font-extrabold text-slate-950">{pageEnd}</span> of <span className="font-extrabold text-slate-950">{visibleRecords.length}</span>
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
-                  <span className="whitespace-nowrap">Rows per page:</span>
-                  <select
-                    value={pageSize}
-                    onChange={(event) => {
-                      setPageSize(Number(event.target.value))
-                      setCurrentPage(1)
-                    }}
-                    className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm font-bold text-slate-800 outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
-                  >
-                    {pageSizeOptions.map((size) => (
-                      <option key={size} value={size}>
-                        {size}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
-                    disabled={safeCurrentPage === 1 || visibleRecords.length === 0}
-                    className="inline-flex h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    <ChevronLeft size={16} />
-                    Previous
-                  </button>
-
-                  {paginationItems.map((item, index) =>
-                    item === 'ellipsis' ? (
-                      <span key={`ellipsis-${index}`} className="flex h-9 w-9 items-center justify-center text-sm font-bold text-slate-400">
-                        ...
-                      </span>
-                    ) : (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => setCurrentPage(item)}
-                        className={`h-9 min-w-9 rounded-md border px-3 text-sm font-extrabold transition ${
-                          item === safeCurrentPage
-                            ? 'border-teal-600 bg-teal-700 text-white shadow-sm'
-                            : 'border-slate-200 bg-white text-slate-700 shadow-sm hover:border-teal-200 hover:bg-teal-50'
-                        }`}
-                      >
-                        {item}
-                      </button>
-                    ),
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
-                    disabled={safeCurrentPage === totalPages || visibleRecords.length === 0}
-                    className="inline-flex h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    Next
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-        </main>
-      </div>
-
-      {modalOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.32)]">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div>
-                <h2 className="text-lg font-extrabold leading-5 text-slate-950">{form.action === 'create' ? 'เพิ่มอุปกรณ์ใหม่' : 'แก้ไขอุปกรณ์'}</h2>
-                <p className="mt-1 text-xs font-semibold text-slate-500">
-                  {form.action === 'create' ? 'บันทึกอุปกรณ์เข้า Agent_TNLX' : `บันทึกเข้าเมื่อ ${formatInsertedAt(form.created_at)}`}
-                </p>
-              </div>
-              <button type="button" onClick={closeModal} className="rounded-md p-2 text-slate-500 hover:bg-white hover:text-slate-900">
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={submitForm} className="max-h-[calc(92vh-73px)] overflow-y-auto bg-white">
-              <div className="space-y-4 p-5">
-                <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
-                    <div>
-                      <h3 className="text-sm font-extrabold text-slate-900">ข้อมูลหลัก</h3>
-                      <p className="text-xs font-medium text-slate-500">ข้อมูลระบุตัวตนและผู้ใช้งาน</p>
-                    </div>
-                    <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700">{typeLabels[form.Status_mac] || 'เลือกประเภท'}</span>
-                  </div>
-
-                  <div className="mb-4">
-                    <label className="mb-1 block text-sm font-bold text-slate-700">ประเภทอุปกรณ์</label>
-                    <select required value={form.Status_mac} onChange={(event) => updateForm('Status_mac', event.target.value)} className={inputClass}>
-                      <option value="">-- เลือกประเภท --</option>
-                      {typeOptions
-                        .filter((item) => item.value)
-                        .map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <TextField label="Asset No. (รหัสทรัพย์สิน)" value={form.asset_no} onChange={(value) => updateForm('asset_no', value)} placeholder="เช่น 5100000...." maxLength={20} />
-                    <TextField label="Hostname" required value={form.hostname} onChange={(value) => updateForm('hostname', value)} placeholder="เช่น TNLX0001" />
-                    <TextField label="IP Address" required value={form.ip_address} onChange={(value) => updateForm('ip_address', value)} placeholder="เช่น 10.X.X.X" />
-                    <TextField label="Username" value={form.username} onChange={(value) => updateForm('username', value)} placeholder="THANULUX\TXXXX" />
-                    <TextField label="Users" value={form.Users} onChange={(value) => updateForm('Users', value)} placeholder="ชื่อผู้ใช้งาน" />
-                    <TextField label="Dep (แผนก)" value={form.Dep} onChange={(value) => updateForm('Dep', value)} placeholder="เช่น 2AM04" />
-                  </div>
-                </section>
-
-                {form.Status_mac === 'C' && (
-                  <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="mb-4 border-b border-slate-100 pb-3">
-                      <h3 className="text-sm font-extrabold text-slate-900">ข้อมูล Computer</h3>
-                      <p className="text-xs font-medium text-slate-500">Spec เครื่อง, Windows และ Office</p>
-                    </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <SelectField label="Windows Version" value={form.windows_version} options={windowsOptions} onChange={(value) => updateForm('windows_version', value)} />
-                    <SelectField label="Office Version" value={form.Office_Version} options={officeOptions} onChange={(value) => updateForm('Office_Version', value)} />
-                    <TextField label="CPU" value={form.cpu_name} onChange={(value) => updateForm('cpu_name', value)} placeholder="12th Gen Intel i5-1235U" />
-                    <TextField label="RAM (GB)" type="number" value={form.ram_total_gb} onChange={(value) => updateForm('ram_total_gb', value)} placeholder="16" />
-                  </div>
-                  </section>
-                )}
-
-                <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="mb-3 border-b border-slate-100 pb-3">
-                    <h3 className="text-sm font-extrabold text-slate-900">รายละเอียดเพิ่มเติม</h3>
-                    <p className="text-xs font-medium text-slate-500">บันทึกลง Detail</p>
-                  </div>
-                  <label className="mb-1 block text-sm font-bold text-slate-700">Detail</label>
-                  <textarea
-                    value={form.Detail}
-                    onChange={(event) =>
-                      updateForm('Detail', event.target.value.toUpperCase())
-                    }
-                    rows={3}
-                    maxLength={100}
-                    className={`${inputClass} h-auto min-h-24 py-3 leading-6 uppercase`}
-                  />
-                </section>
-
-                <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
-                    <ImageIcon size={16} className="text-teal-700" />
-                    รูปภาพ
-                  </div>
-                  <span className="text-xs font-semibold text-slate-500">สูงสุด 3 รูป</span>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <label className="flex cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed border-teal-200 bg-teal-50 px-4 py-5 text-center text-sm font-semibold text-slate-600 transition hover:border-teal-500 hover:bg-teal-100/60">
-                    <ImageIcon className="mb-2 text-teal-700" size={24} />
-                    เลือกรูปจากคลังภาพ
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={(event) => onImageSelect(event.target.files)} />
-                  </label>
-                  <label className="flex cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm font-semibold text-slate-600 transition hover:border-teal-500 hover:bg-slate-100">
-                    <Camera className="mb-2 text-teal-700" size={24} />
-                    ถ่ายรูปด้วยกล้อง
-                    <input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={(event) => onImageSelect(event.target.files)} />
-                  </label>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {existingImages.map((src) => (
-                    <ImageThumb
-                      key={src}
-                      src={toImageURL(src)}
-                      onView={() => setViewerImage(toImageURL(src))}
-                      onRemove={() => removeExistingImage(src)}
-                      onCrop={() => recropExistingImage(src)}
-                    />
-                  ))}
-                  {pendingImages.map((image, index) => (
-                    <ImageThumb
-                      key={image.previewUrl}
-                      src={image.previewUrl}
-                      onView={() => setViewerImage(image.previewUrl)}
-                      onRemove={() => removePendingImage(index)}
-                      onCrop={() => recropPendingImage(index)}
-                    />
-                  ))}
-                </div>
-                </section>
-              </div>
-
-              <div className="sticky bottom-0 flex flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:justify-end">
-                <button type="button" onClick={closeModal} className="h-10 rounded-md px-5 font-bold text-slate-600 hover:bg-white">
-                  ยกเลิก
-                </button>
-                <button type="submit" disabled={saving} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-teal-700 px-5 font-extrabold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70">
-                  {saving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-                  บันทึกข้อมูล
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {viewerImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4" onClick={() => setViewerImage('')}>
-          <div className="relative max-h-[90vh] max-w-4xl">
-            <button type="button" className="absolute -top-11 right-0 rounded-md p-2 text-white hover:bg-white/10" onClick={() => setViewerImage('')}>
-              <X size={26} />
-            </button>
-            <img src={viewerImage} alt="" className="max-h-[88vh] w-full rounded-lg object-contain shadow-2xl" />
-          </div>
-        </div>
-      )}
-
-      {currentCropItem && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 p-4">
-          <div className="flex w-full max-w-lg flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.4)]">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3">
-              <div className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
-                <Crop size={16} className="text-teal-700" />
-                ครอบตัดรูปภาพ
-                {cropTotal > 1 && (
-                  <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-bold text-teal-700">
-                    {cropTotal - cropQueue.length + 1}/{cropTotal}
-                  </span>
-                )}
-              </div>
-              <button type="button" onClick={cancelCropQueue} className="rounded-md p-1.5 text-slate-500 hover:bg-white hover:text-slate-900" title="ยกเลิกทั้งหมด">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="relative h-72 w-full bg-slate-900 sm:h-96">
-              <Cropper
-                image={currentCropItem.url}
-                crop={crop}
-                zoom={zoom}
-                aspect={cropAspect ?? naturalAspect}
-                onCropChange={setCrop}
-                onZoomChange={setZoom}
-                onCropComplete={(_area, areaPixels) => setCroppedAreaPixels(areaPixels)}
-                onMediaLoaded={onCropMediaLoaded}
-              />
-            </div>
-
-            <div className="space-y-3 px-5 py-4">
-              <div className="flex flex-wrap gap-1.5">
-                {cropAspectPresets.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() => setCropAspect(preset.value)}
-                    className={`h-8 rounded-md border px-3 text-xs font-bold transition ${
-                      cropAspect === preset.value
-                        ? 'border-teal-600 bg-teal-700 text-white'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-teal-300 hover:bg-teal-50'
-                    }`}
-                  >
-                    {preset.label}
-                  </button>
                 ))}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <ZoomIn size={16} className="shrink-0 text-slate-500" />
-                <input
-                  type="range"
-                  min={1}
-                  max={4}
-                  step={0.05}
-                  value={zoom}
-                  onChange={(event) => setZoom(Number(event.target.value))}
-                  className="h-1.5 w-full accent-teal-700"
-                />
-              </div>
+              </tbody>
+            </table>
+          </CardContent>
+          <CardFooter className="shrink-0 flex-col items-start justify-between gap-3 xl:flex-row xl:items-center">
+            <p className="text-xs text-muted-foreground">Showing <strong className="text-foreground">{visibleRecords.length === 0 ? 0 : pageStart + 1}–{pageEnd}</strong> of <strong className="text-foreground">{visibleRecords.length}</strong></p>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2"><label htmlFor="page-size" className="whitespace-nowrap text-xs text-muted-foreground">Rows per page:</label><select id="page-size" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setCurrentPage(1) }} className={cn(inputClass, 'w-20')}>{pageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></div>
+              <nav aria-label="หน้าของรายการอุปกรณ์" className="flex items-center gap-1">
+                <Button type="button" variant="outline" size="sm" onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))} disabled={safeCurrentPage === 1 || visibleRecords.length === 0} aria-label="หน้าก่อนหน้า"><ChevronLeft data-icon="inline-start" /><span className="hidden sm:inline">Prev</span></Button>
+                {paginationItems.map((item, index) => item === 'ellipsis' ? <span key={`ellipsis-${index}`} className="flex size-9 items-center justify-center text-muted-foreground">...</span> : <Button key={item} type="button" variant={item === safeCurrentPage ? 'default' : 'ghost'} size="icon-sm" aria-current={item === safeCurrentPage ? 'page' : undefined} onClick={() => setCurrentPage(item)}>{item}</Button>)}
+                <Button type="button" variant="outline" size="sm" onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))} disabled={safeCurrentPage === totalPages || visibleRecords.length === 0} aria-label="หน้าถัดไป"><span className="hidden sm:inline">Next</span><ChevronRight data-icon="inline-end" /></Button>
+              </nav>
             </div>
+          </CardFooter>
+        </Card>
+      </main>
 
-            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:justify-end">
-              <button type="button" onClick={skipCropItem} disabled={cropping} className="h-10 rounded-md px-4 text-sm font-bold text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60">
-                ข้ามรูปนี้
-              </button>
-              <button
-                type="button"
-                onClick={confirmCrop}
-                disabled={cropping}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-teal-700 px-5 text-sm font-extrabold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {cropping ? <Loader2 className="animate-spin" size={16} /> : <Crop size={16} />}
-                ตัดและเพิ่มรูป
-              </button>
+      <Dialog open={modalOpen} onOpenChange={(open) => { if (!open) closeModal() }}>
+        <DialogContent className="max-h-[92dvh] grid-rows-[auto_auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-3xl" onInteractOutside={(event) => event.preventDefault()} showCloseButton={false}>
+          <DialogHeader className="relative px-5 py-5 sm:px-7">
+            <p className="eyebrow">ASSET DETAILS</p>
+            <DialogTitle>{form.action === 'create' ? 'เพิ่มอุปกรณ์ใหม่' : 'แก้ไขอุปกรณ์'}</DialogTitle>
+            <DialogDescription>{form.action === 'create' ? 'บันทึกอุปกรณ์เข้า Agent_TNLX' : `บันทึกเข้าเมื่อ ${formatInsertedAt(form.created_at)}`}</DialogDescription>
+            <Button type="button" variant="ghost" size="icon-sm" onClick={closeModal} aria-label="ปิดฟอร์ม" className="absolute right-3 top-3"><X /></Button>
+          </DialogHeader>
+          <Separator />
+          <form onSubmit={submitForm} className="min-h-0 overflow-y-auto">
+            <FieldGroup className="gap-5 p-4 sm:p-6">
+              <Card size="sm">
+                <CardHeader><CardTitle>ข้อมูลหลัก</CardTitle><CardDescription>ข้อมูลระบุตัวตนและผู้ใช้งาน</CardDescription><CardAction><Badge variant="secondary">{typeLabels[form.Status_mac] || 'เลือกประเภท'}</Badge></CardAction></CardHeader>
+                <CardContent>
+                  <FieldGroup>
+                    <Field><FieldLabel htmlFor="device-type">ประเภทอุปกรณ์ <span className="text-destructive">*</span></FieldLabel>
+                      <select id="device-type" required value={form.Status_mac} onChange={(event) => updateForm('Status_mac', event.target.value)} className={inputClass}><option value="">-- เลือกประเภท --</option>{typeOptions.filter((item) => item.value).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+                    </Field>
+                    <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <TextField label="Asset No. (รหัสทรัพย์สิน)" value={form.asset_no} onChange={(value) => updateForm('asset_no', value)} placeholder="เช่น 5100000...." maxLength={20} />
+                      <TextField label="Hostname" required value={form.hostname} onChange={(value) => updateForm('hostname', value)} placeholder="เช่น TNLX0001" />
+                      <TextField label="IP Address" required value={form.ip_address} onChange={(value) => updateForm('ip_address', value)} placeholder="เช่น 10.X.X.X" />
+                      <TextField label="Username" value={form.username} onChange={(value) => updateForm('username', value)} placeholder="THANULUX\TXXXX" />
+                      <TextField label="Users" value={form.Users} onChange={(value) => updateForm('Users', value)} placeholder="ชื่อผู้ใช้งาน" />
+                      <TextField label="Dep (แผนก)" value={form.Dep} onChange={(value) => updateForm('Dep', value)} placeholder="เช่น 2AM04" />
+                    </FieldGroup>
+                  </FieldGroup>
+                </CardContent>
+              </Card>
+              {form.Status_mac === 'C' && <Card size="sm"><CardHeader><CardTitle>ข้อมูล Computer</CardTitle><CardDescription>Spec เครื่อง, Windows และ Office</CardDescription></CardHeader><CardContent><FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <SelectField label="Windows Version" value={form.windows_version} options={windowsOptions} onChange={(value) => updateForm('windows_version', value)} />
+                <SelectField label="Office Version" value={form.Office_Version} options={officeOptions} onChange={(value) => updateForm('Office_Version', value)} />
+                <TextField label="CPU" value={form.cpu_name} onChange={(value) => updateForm('cpu_name', value)} placeholder="12th Gen Intel i5-1235U" />
+                <TextField label="RAM (GB)" type="number" value={form.ram_total_gb} onChange={(value) => updateForm('ram_total_gb', value)} placeholder="16" />
+              </FieldGroup></CardContent></Card>}
+              <Card size="sm"><CardHeader><CardTitle>รายละเอียดเพิ่มเติม</CardTitle><CardDescription>บันทึกลง Detail</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="asset-detail">Detail</FieldLabel><Textarea id="asset-detail" value={form.Detail} onChange={(event) => updateForm('Detail', event.target.value.toUpperCase())} rows={3} maxLength={100} className="min-h-24" /></Field></CardContent></Card>
+              <Card size="sm"><CardHeader><CardTitle>รูปภาพ</CardTitle><CardDescription>เลือกรูปหรือถ่ายภาพอุปกรณ์ สูงสุด 3 รูป</CardDescription></CardHeader><CardContent>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="upload-option"><ImageIcon size={24} /><span>เลือกรูปจากคลังภาพ</span><input type="file" accept="image/*" multiple className="sr-only" onChange={(event) => onImageSelect(event.target.files)} /></label>
+                  <label className="upload-option"><Camera size={24} /><span>ถ่ายรูปด้วยกล้อง</span><input type="file" accept="image/*" capture="environment" multiple className="sr-only" onChange={(event) => onImageSelect(event.target.files)} /></label>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {existingImages.map((src) => <ImageThumb key={src} src={toImageURL(src)} onView={() => setViewerImage(toImageURL(src))} onRemove={() => removeExistingImage(src)} onCrop={() => recropExistingImage(src)} />)}
+                  {pendingImages.map((image, index) => <ImageThumb key={image.previewUrl} src={image.previewUrl} onView={() => setViewerImage(image.previewUrl)} onRemove={() => removePendingImage(index)} onCrop={() => recropPendingImage(index)} />)}
+                </div>
+              </CardContent></Card>
+            </FieldGroup>
+            <div className="modal-actions sticky bottom-0 flex flex-col-reverse gap-3 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+              <Button type="button" variant="outline" onClick={closeModal}>ยกเลิก</Button>
+              <Button type="submit" disabled={saving}>{saving ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Save data-icon="inline-start" />}บันทึกข้อมูล</Button>
             </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(viewerImage)} onOpenChange={(open) => { if (!open) setViewerImage('') }}>
+        <DialogContent className="max-h-[92dvh] overflow-auto sm:max-w-4xl">
+          <DialogHeader><DialogTitle>รูปภาพอุปกรณ์</DialogTitle><DialogDescription className="sr-only">ภาพอุปกรณ์ขนาดเต็ม</DialogDescription></DialogHeader>
+          {viewerImage && <img src={viewerImage} alt="รูปภาพอุปกรณ์ขนาดเต็ม" className="max-h-[78dvh] w-full rounded-xl object-contain" onClick={() => setViewerImage('')} />}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(currentCropItem)} onOpenChange={(open) => { if (!open) cancelCropQueue() }}>
+        <DialogContent className="max-h-[92dvh] gap-0 overflow-y-auto p-0 sm:max-w-lg" onInteractOutside={(event) => event.preventDefault()} showCloseButton={false}>
+          <DialogHeader className="relative p-5"><p className="eyebrow">IMAGE EDITOR</p><DialogTitle>ครอบตัดรูปภาพ</DialogTitle><DialogDescription>ปรับสัดส่วนและขยายภาพก่อนเพิ่มรูป {cropTotal > 1 ? `(${cropTotal - cropQueue.length + 1}/${cropTotal})` : ''}</DialogDescription><Button type="button" variant="ghost" size="icon-sm" onClick={cancelCropQueue} title="ยกเลิกทั้งหมด" aria-label="ยกเลิกการครอบตัดทั้งหมด" className="absolute right-3 top-3"><X /></Button></DialogHeader>
+          <div className="crop-surface relative h-[min(36dvh,384px)] min-h-48 w-full">
+            {currentCropItem && <Cropper image={currentCropItem.url} crop={crop} zoom={zoom} aspect={cropAspect ?? naturalAspect} onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={(_area, areaPixels) => setCroppedAreaPixels(areaPixels)} onMediaLoaded={onCropMediaLoaded} />}
           </div>
-        </div>
-      )}
+          <div className="flex flex-col gap-4 p-5">
+            <ToggleGroup type="single" variant="outline" value={cropAspect == null ? 'full' : String(cropAspect)} onValueChange={(value) => { if (value) setCropAspect(value === 'full' ? null : Number(value)) }} aria-label="สัดส่วนรูปภาพ" className="flex-wrap">
+              {cropAspectPresets.map((preset) => <ToggleGroupItem key={preset.label} value={preset.value == null ? 'full' : String(preset.value)}>{preset.label}</ToggleGroupItem>)}
+            </ToggleGroup>
+            <div className="flex items-center gap-3"><ZoomIn size={18} className="shrink-0 text-muted-foreground" /><input aria-label="ขยายภาพ" type="range" min={1} max={4} step={0.05} value={zoom} onChange={(event) => setZoom(Number(event.target.value))} className="h-2 w-full accent-primary" /></div>
+          </div>
+          <div className="modal-actions flex flex-col-reverse gap-2 p-5 sm:flex-row sm:justify-end"><Button type="button" variant="outline" onClick={skipCropItem} disabled={cropping}>ข้ามรูปนี้</Button><Button type="button" onClick={confirmCrop} disabled={cropping}>{cropping ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Crop data-icon="inline-start" />}ตัดและเพิ่มรูป</Button></div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
+}
+
+function showSavedToast(title: string, name: string) {
+  void Swal.fire({
+    toast: true,
+    position: 'top-end',
+    icon: 'success',
+    title,
+    text: name ? `${name} ถูกบันทึกเข้าระบบแล้ว` : 'ข้อมูลถูกบันทึกเข้าระบบแล้ว',
+    timer: SAVE_NOTICE_MS,
+    timerProgressBar: true,
+    showConfirmButton: false,
+    showCloseButton: true,
+    customClass: { popup: 'sso-save-toast', title: 'sso-save-toast-title', htmlContainer: 'sso-save-toast-text', timerProgressBar: 'sso-save-toast-progress' },
+    didOpen: (toast) => {
+      toast.addEventListener('mouseenter', Swal.stopTimer)
+      toast.addEventListener('mouseleave', Swal.resumeTimer)
+    },
+  })
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-white/75 bg-white/62 px-2 py-2 shadow-sm backdrop-blur">
-      <p className="text-lg font-extrabold leading-5">{value}</p>
-      <p className="text-[11px] font-semibold text-slate-500">{label}</p>
-    </div>
-  )
+  return <div className="stat-tile"><p className="text-xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{label}</p></div>
 }
 
-function TextField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  required = false,
-  type = 'text',
-  maxLength,
-}: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-  placeholder?: string
-  required?: boolean
-  type?: string
-  maxLength?: number
+function TextField({ label, value, onChange, placeholder, required = false, type = 'text', maxLength }: {
+  label: string; value: string; onChange: (value: string) => void; placeholder?: string; required?: boolean; type?: string; maxLength?: number
 }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[13px] font-extrabold text-slate-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </span>
-      <input
-        required={required}
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        className={inputClass}
-      />
-    </label>
-  )
+  const id = useId()
+  return <Field><FieldLabel htmlFor={id}>{label}{required && <span className="text-destructive">*</span>}</FieldLabel><Input id={id} required={required} type={type} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} maxLength={maxLength} /></Field>
 }
 
 function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[13px] font-extrabold text-slate-700">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}>
-        <option value="">-- เลือก --</option>
-        {options.map((option) => (
-          <option key={option}>{option}</option>
-        ))}
-      </select>
-    </label>
-  )
+  const id = useId()
+  return <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><select id={id} value={value} onChange={(event) => onChange(event.target.value)} className={inputClass}><option value="">-- เลือก --</option>{options.map((option) => <option key={option}>{option}</option>)}</select></Field>
 }
 
 function getPaginationItems(currentPage: number, totalPages: number): Array<number | 'ellipsis'> {
@@ -1326,16 +943,16 @@ function getPaginationItems(currentPage: number, totalPages: number): Array<numb
 function ImageThumb({ src, onView, onRemove, onCrop }: { src: string; onView: () => void; onRemove: () => void; onCrop?: () => void }) {
   return (
     <div className="relative">
-      <button type="button" onClick={onView} className="block rounded-md border border-white/80 bg-white/55 p-0.5 shadow-sm backdrop-blur hover:border-teal-500" title="ดูรูป">
-        <img src={src} alt="" className="h-20 w-20 rounded object-cover" />
-        <Eye className="absolute bottom-2 left-2 rounded bg-white/90 p-1 text-slate-700" size={22} />
+      <button type="button" onClick={onView} className="block rounded-lg border border-border bg-card p-0.5 shadow-sm transition-colors hover:border-primary" title="ดูรูป" aria-label="ดูรูป">
+        <img src={src} alt="" className="size-20 rounded-md object-cover" />
+        <Eye className="absolute bottom-2 left-2 rounded bg-card/90 p-1 text-foreground" size={22} />
       </button>
       {onCrop && (
-        <button type="button" onClick={onCrop} className="absolute -bottom-2 -right-2 rounded-full bg-teal-700 p-1 text-white shadow hover:bg-teal-800" title="ครอบตัดรูป">
+        <button type="button" onClick={onCrop} className="absolute -bottom-2 -right-2 rounded-full bg-primary p-1 text-primary-foreground shadow hover:bg-primary/90" title="ครอบตัดรูป" aria-label="ครอบตัดรูป">
           <Crop size={14} />
         </button>
       )}
-      <button type="button" onClick={onRemove} className="absolute -right-2 -top-2 rounded-full bg-red-600 p-1 text-white shadow hover:bg-red-700" title="ลบรูป">
+      <button type="button" onClick={onRemove} className="absolute -right-2 -top-2 rounded-full bg-destructive p-1 text-primary-foreground shadow hover:bg-destructive/90" title="ลบรูป" aria-label="ลบรูป">
         <X size={14} />
       </button>
     </div>
