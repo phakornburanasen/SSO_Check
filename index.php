@@ -42,6 +42,13 @@ $userCheck = isset($_GET['userCheck']) ? htmlspecialchars($_GET['userCheck']) : 
         .img-preview-thumb:hover { border-color: #6366f1; transform: scale(1.08); box-shadow: 0 4px 12px rgba(99,102,241,0.15); }
         table th { position:sticky; top:0; background:#f9fafb; color:#6b7280; font-weight:600; letter-spacing:0.025em; text-transform:uppercase; font-size:0.6875rem; }
         .modal-overlay { background: rgba(15,23,42,0.45); backdrop-filter: blur(4px); }
+        .active-toggle { display:inline-flex; align-items:center; gap:6px; cursor:pointer; user-select:none; color:#059669; font-size:13px; font-weight:700; }
+        .active-toggle input { position:absolute; opacity:0; pointer-events:none; }
+        .active-toggle-track { position:relative; width:32px; height:16px; border-radius:999px; background:#2563eb; transition:background-color .2s ease; }
+        .active-toggle-track::after { content:''; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:999px; background:#fff; box-shadow:0 1px 2px rgba(15,23,42,.25); transition:transform .2s ease; }
+        .active-toggle input:checked + .active-toggle-track::after { transform:translateX(16px); }
+        .active-toggle input:not(:checked) + .active-toggle-track { background:#cbd5e1; }
+        .active-toggle:has(input:not(:checked)) { color:#64748b; }
         @media (max-width:640px) {
             .responsive-table { font-size:0.75rem; }
             .responsive-table th, .responsive-table td { padding:0.5rem 0.35rem; }
@@ -213,6 +220,17 @@ $userCheck = isset($_GET['userCheck']) ? htmlspecialchars($_GET['userCheck']) : 
                     <textarea name="Detail" id="f_detail" maxlength="100" rows="2"
                         class="w-full input-focus rounded-xl px-4 py-3" placeholder="รายละเอียดเพิ่มเติม เช่น ยี่ห้อ/รุ่น"></textarea>
                 </div>
+            </div>
+
+            <div class="border-t pt-4 flex items-center justify-between gap-3">
+                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wide">สถานะการใช้งาน</h3>
+                <input type="hidden" name="Active" id="f_active" value="Y">
+                <label class="active-toggle" title="สถานะการใช้งาน">
+                    <input type="checkbox" id="activeToggle" checked onchange="setActiveValue(this.checked)">
+                    <span class="active-toggle-track" aria-hidden="true"></span>
+                    <i id="activeIcon" class="fa-solid fa-lock-open"></i>
+                    <span id="activeLabel">Enabled</span>
+                </label>
             </div>
 
             <!-- Image Upload -->
@@ -408,6 +426,7 @@ $userCheck = isset($_GET['userCheck']) ? htmlspecialchars($_GET['userCheck']) : 
         document.getElementById('existingImagesContainer').innerHTML = '';
         document.getElementById('existingImages').value = '';
         document.getElementById('imageInput').value = '';
+        setActiveValue(true);
         selectedImageFiles = [];
         removedExistingImages = [];
     }
@@ -425,6 +444,7 @@ $userCheck = isset($_GET['userCheck']) ? htmlspecialchars($_GET['userCheck']) : 
         document.getElementById('f_ram').value = row.ram_total_gb || '';
         document.getElementById('userCheckInput').value = row.user_check || USER_CHECK;
         document.getElementById('existingImages').value = row.img_png || '';
+        setActiveValue(String(row.Active || 'Y').toUpperCase() !== 'N');
         toggleFields();
 
         if (row.img_png) {
@@ -470,6 +490,13 @@ $userCheck = isset($_GET['userCheck']) ? htmlspecialchars($_GET['userCheck']) : 
         var type = document.getElementById('typeSelect').value;
         document.getElementById('computerFields').classList.toggle('hidden', type !== 'C');
         document.getElementById('otherFields').classList.toggle('hidden', type === 'C' || type === '');
+    }
+
+    function setActiveValue(enabled) {
+        document.getElementById('f_active').value = enabled ? 'Y' : 'N';
+        document.getElementById('activeToggle').checked = enabled;
+        document.getElementById('activeIcon').className = enabled ? 'fa-solid fa-lock-open' : 'fa-solid fa-lock';
+        document.getElementById('activeLabel').textContent = enabled ? 'Enabled' : 'Disabled';
     }
 // ========= IMAGE HANDLING (with client-side compression) =========
     function compressImage(file, callback) {

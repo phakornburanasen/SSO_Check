@@ -105,6 +105,44 @@
   .workspace-header { color: var(--header-foreground); background: linear-gradient(110deg, var(--header-start), var(--header) 70%); }
   .header-caption { color: var(--header-muted); }
   .header-status { color: var(--header-active); }
+  .header-user { color: var(--header-foreground); }
+  .workspace-layout {
+    @apply mx-auto grid w-full max-w-[1920px] min-w-0 grid-cols-1 gap-5 p-4 sm:p-6 lg:min-h-0 lg:flex-1 lg:p-6;
+    transition: grid-template-columns 320ms cubic-bezier(0.22, 1, 0.36, 1), gap 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .check-asset-panel {
+    @apply min-w-0 overflow-hidden lg:min-h-0 lg:overflow-y-auto lg:pr-1;
+    max-height: 1800px;
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+    transition:
+      max-height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 220ms ease,
+      transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0s;
+  }
+  .workspace-layout.is-left-card-hidden .check-asset-panel {
+    max-height: 0;
+    opacity: 0;
+    transform: translateX(-10px);
+    visibility: hidden;
+    transition:
+      max-height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 180ms ease,
+      transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 280ms;
+  }
+  .workspace-layout.is-left-card-hidden .check-asset-panel > * { pointer-events: none; }
+  @media (min-width: 1024px) {
+    .workspace-layout { grid-template-columns: 300px minmax(0, 1fr); }
+    .workspace-layout.is-left-card-hidden { grid-template-columns: 0 minmax(0, 1fr); gap: 0; }
+    .check-asset-panel { max-height: none; }
+  }
+  @media (min-width: 1280px) {
+    .workspace-layout { grid-template-columns: 320px minmax(0, 1fr); }
+    .workspace-layout.is-left-card-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+  }
   .eyebrow { color: var(--primary); font-size: 10px; font-weight: 650; letter-spacing: 0.12em; line-height: 1.6; }
   .native-select {
     @apply h-9 w-full min-w-0 rounded-lg border border-input bg-card px-3 text-sm text-foreground outline-none transition-colors;
@@ -121,6 +159,19 @@
     @apply transition-colors hover:border-primary hover:bg-secondary has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/30;
   }
   .upload-option > svg { color: var(--primary); }
+  .active-switch {
+    @apply inline-flex cursor-pointer select-none items-center gap-1.5 rounded-lg px-1.5 py-1 text-xs font-bold text-success transition-colors;
+  }
+  .active-switch[aria-pressed="false"] { color: var(--muted-foreground); }
+  .active-switch-track {
+    @apply relative inline-flex h-4 w-8 shrink-0 items-center rounded-full bg-primary transition-colors;
+  }
+  .active-switch-track span {
+    @apply ml-0.5 size-3 rounded-full bg-white shadow-sm transition-transform;
+  }
+  .active-switch[aria-pressed="false"] .active-switch-track { background: var(--input); }
+  .active-switch[aria-pressed="true"] .active-switch-track span { transform: translateX(16px); }
+  .active-switch:focus-visible .active-switch-track { outline: 2px solid var(--primary); outline-offset: 3px; }
   .modal-actions { @apply border-t border-border bg-card; }
   .crop-surface { background: var(--header); }
   .asset-table { color: var(--table-text); }
@@ -130,6 +181,33 @@
   .asset-table tbody tr { @apply transition-colors; }
   .asset-table tbody tr:hover { background: var(--table-row-hover); }
   .asset-table tbody tr:last-child td { border-bottom: 0; }
+  .login-shell { @apply min-h-dvh bg-[#f4f7fb] text-[#09142a] lg:grid lg:grid-cols-[minmax(420px,48vw)_1fr]; }
+  .login-brand-panel {
+    @apply relative flex min-h-[44dvh] flex-col overflow-hidden bg-[#101827] px-8 py-9 text-white sm:px-14 lg:min-h-dvh lg:px-14 lg:py-24;
+    background:
+      radial-gradient(circle at 18% 10%, rgb(18 112 117 / 34%), transparent 34%),
+      linear-gradient(120deg, #123f46 0%, #101827 58%, #111827 100%);
+  }
+  .login-logo { @apply h-10 w-28 object-contain sm:h-12 sm:w-32; }
+  .login-brand-copy { @apply mt-auto max-w-xl pb-14 pt-20 lg:pb-24; }
+  .login-eyebrow { @apply mb-5 text-xs font-bold uppercase tracking-wider text-[#15ded1]; }
+  .login-brand-copy h1 { @apply mb-5 text-5xl font-bold tracking-tight sm:text-6xl; }
+  .login-brand-copy p:not(.login-eyebrow) { @apply text-sm leading-7 text-white; }
+  .login-footer { @apply flex flex-wrap justify-between gap-4 border-t border-white/10 pt-7 text-[11px] text-sky-100; }
+  .login-form-panel { @apply flex min-h-[56dvh] items-center justify-center px-5 py-10 sm:px-8 lg:min-h-dvh; }
+  .login-card { @apply w-full max-w-md rounded-2xl border border-[#d5e0ec] bg-white px-8 py-10 shadow-[0_24px_70px_rgb(15_23_42_/_10%)]; }
+  .login-card-kicker { @apply text-xs font-bold tracking-widest text-primary; }
+  .login-card h2 { @apply mt-3 text-2xl font-bold tracking-tight text-[#09142a]; }
+  .login-card-description { @apply mt-2 text-sm text-muted-foreground; }
+  .login-field { @apply mt-7 block; }
+  .login-field > span { @apply mb-2 block text-xs font-bold tracking-wide text-[#09142a]; }
+  .login-password { @apply relative; }
+  .login-password input { @apply pr-12; }
+  .login-password button {
+    @apply absolute right-3 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-[#7c95b4] transition-colors hover:bg-secondary hover:text-primary;
+  }
+  .login-error { @apply mt-5 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive; }
+  .login-submit { @apply mt-6 w-full bg-primary shadow-[0_14px_24px_rgb(15_123_120_/_20%)] hover:bg-primary/90; }
 }
 
 /* SweetAlert keeps the existing confirmation flow and shares the UI theme. */

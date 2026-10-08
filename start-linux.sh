@@ -10,6 +10,9 @@ export APP_ROOT="${APP_ROOT:-$ROOT}"
 export FRONTEND_DIR="${FRONTEND_DIR:-$ROOT/frontend/dist}"
 export UPLOAD_DIR="${UPLOAD_DIR:-$ROOT/uploads/imgs}"
 export CORS_ORIGIN="${CORS_ORIGIN:-*}"
+if [ -f "$ROOT/dist/linux/.env" ]; then
+  export DOCUMENT_ENV_FILE="${DOCUMENT_ENV_FILE:-$ROOT/dist/linux/.env}"
+fi
 
 if [ ! -x "$ROOT/dist/linux/sso-check-backend" ]; then
   echo "Missing dist/linux/sso-check-backend. Run ./build-linux.sh first."

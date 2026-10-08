@@ -25,6 +25,36 @@ if errorlevel 8 exit /b 1
 
 if not exist "%OUT%\uploads\imgs" mkdir "%OUT%\uploads\imgs"
 
+set "ENV_SOURCE="
+if exist "%ROOT%\.env" set "ENV_SOURCE=%ROOT%\.env"
+if not defined ENV_SOURCE if exist "%ROOT%\backend\.env" set "ENV_SOURCE=%ROOT%\backend\.env"
+if not defined ENV_SOURCE if defined DOCUMENT_ENV_FILE if exist "%DOCUMENT_ENV_FILE%" set "ENV_SOURCE=%DOCUMENT_ENV_FILE%"
+if not defined ENV_SOURCE if exist "C:\Dev\DOCUMENT\backend\.env" set "ENV_SOURCE=C:\Dev\DOCUMENT\backend\.env"
+if defined ENV_SOURCE (
+  copy /Y "%ENV_SOURCE%" "%OUT%\.env" >nul
+  echo Copied environment file to %OUT%\.env
+) else (
+  (
+    echo PORT=10100
+    echo DB_SERVER=10.0.32.165
+    echo DB_NAME=SSO_Agent_tnlx
+    echo DB_USER=sa
+    echo DB_PASS=
+    echo DB_ENCRYPT=disable
+    echo DB_TRUST_SERVER_CERTIFICATE=true
+    echo VPN_LOGIN_DSN=sqlserver://user:password@server:1433?database=vpn_documents^&encrypt=disable^&TrustServerCertificate=true
+    echo AD_LDAP_URL=ldaps://ad.example.local
+    echo AD_LDAP_DOMAIN=thanulux.local
+    echo AD_LDAP_BIND_PATTERN=
+    echo AD_LDAP_START_TLS=false
+    echo AD_LDAP_INSECURE_TLS=true
+    echo AD_LDAP_TIMEOUT_SEC=5
+    echo JWT_SECRET=change-me-please-use-a-long-random-secret
+    echo JWT_TTL_MINUTES=480
+  ) > "%OUT%\.env.example"
+  echo No .env found. Created %OUT%\.env.example; copy it to .env and fill AD/VPN settings before login.
+)
+
 (
   echo #!/usr/bin/env bash
   echo set -euo pipefail

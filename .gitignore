@@ -1,0 +1,6 @@
+.env
+backend/.env
+dist/**/.env
+dist/**/.env.local
+.runtime/*.pid
+.runtime/*.log

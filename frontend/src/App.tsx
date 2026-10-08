@@ -10,10 +10,15 @@ import {
   Edit3,
   ExternalLink,
   Eye,
+  EyeOff,
   ImageIcon,
   LayoutGrid,
   Loader2,
+  Lock,
+  LogOut,
   Monitor,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Printer,
   RefreshCw,
@@ -22,6 +27,8 @@ import {
   Search,
   Server,
   Trash2,
+  Unlock,
+  UserRound,
   X,
   Zap,
   Projector,
@@ -61,6 +68,7 @@ type AgentRecord = {
   img_png?: string | null
   Status_mac?: string | null
   user_check?: string | null
+  Active?: string | null
 }
 
 type FormState = {
@@ -80,12 +88,32 @@ type FormState = {
   ram_total_gb: string
   Detail: string
   user_check: string
+  Active: string
 }
 
 type PendingImage = {
   blob: Blob
   name: string
   previewUrl: string
+}
+
+type LoginResponse = {
+  success?: boolean
+  username?: string
+  displayName?: string
+  role?: string
+  token?: string
+  expiresAt?: number
+  message?: string
+  error?: string
+}
+
+type LoginSession = {
+  username: string
+  displayName: string
+  role: string
+  token: string
+  expiresAt: number
 }
 
 type CropReplaceTarget = { kind: 'pending'; index: number } | { kind: 'existing'; src: string }
@@ -110,6 +138,8 @@ const MUTATION_API_BASE = (import.meta.env.VITE_MUTATION_API_BASE || DEFAULT_MUT
 const apiURL = (path: string) => `${API_BASE}${path}`
 const mutationApiURL = (path: string) => `${MUTATION_API_BASE}${path}`
 const SAP_SEARCH_URL = 'http://10.0.32.71/SearchAsset/'
+const SESSION_KEY = 'sso_check_login_session'
+const LEFT_CARD_HIDDEN_KEY = 'sso_check_left_card_hidden'
 
 const typeOptions = [
   { value: '', label: 'ทั้งหมด', icon: LayoutGrid },
@@ -164,7 +194,7 @@ function App() {
   const [message, setMessage] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [viewerImage, setViewerImage] = useState('')
-  const [form, setForm] = useState<FormState>(() => emptyForm(getUserCheck()))
+  const [form, setForm] = useState<FormState>(() => emptyForm(getInitialUserCheck()))
   const [existingImages, setExistingImages] = useState<string[]>([])
   const [removedImages, setRemovedImages] = useState<string[]>([])
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
@@ -183,16 +213,45 @@ function App() {
   const [assetListUserCheck, setAssetListUserCheck] = useState('')
   const [pageSize, setPageSize] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
+  const [session, setSession] = useState<LoginSession | null>(() => loadLoginSession())
+  const [leftCardHidden, setLeftCardHidden] = useState(() => readLeftCardHidden())
 
-  const userCheck = useMemo(() => getUserCheck(), [])
+  const queryUserCheck = useMemo(() => getUserCheck(), [])
+  const userCheck = session?.username || queryUserCheck || ''
 
   useEffect(() => {
+    if (!userCheck) {
+      setLoading(false)
+      return
+    }
     loadRecords(filter)
-  }, [filter])
+  }, [filter, userCheck])
 
   useEffect(() => {
+    if (!userCheck) return
     loadExportUserChecks()
-  }, [])
+  }, [userCheck])
+
+  useEffect(() => {
+    if (!session) return
+    const expiresInMs = (session.expiresAt * 1000) - Date.now()
+    if (expiresInMs <= 0) {
+      clearLoginSession()
+      setSession(null)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      clearLoginSession()
+      setSession(null)
+    }, expiresInMs)
+    return () => window.clearTimeout(timer)
+  }, [session])
+
+  useEffect(() => {
+    if (!session || queryUserCheck === session.username) return
+    const base = import.meta.env.BASE_URL || '/SSO_Check/'
+    window.history.replaceState(null, '', `${base}?userCheck=${encodeURIComponent(session.username)}`)
+  }, [queryUserCheck, session])
 
   // Success notices fade out on their own; errors stay until the next action.
   useEffect(() => {
@@ -319,6 +378,7 @@ function App() {
         ram_total_gb: row.ram_total_gb == null ? '' : String(row.ram_total_gb),
         Detail: row.Detail || '',
         user_check: row.user_check || userCheck,
+        Active: normalizeActive(row.Active),
       })
       setExistingImages(splitImages(row.img_png))
       setRemovedImages([])
@@ -636,6 +696,30 @@ function App() {
     setCropTotal(0)
   }
 
+  function handleLogin(nextSession: LoginSession) {
+    saveLoginSession(nextSession)
+    setSession(nextSession)
+  }
+
+  function handleLogout() {
+    clearLoginSession()
+    setSession(null)
+    setRecords([])
+    setExportUserCheckOptions([])
+    const base = import.meta.env.BASE_URL || '/SSO_Check/'
+    window.history.replaceState(null, '', base)
+  }
+
+  function toggleLeftCard() {
+    setLeftCardHidden((current) => {
+      const next = !current
+      window.localStorage.setItem(LEFT_CARD_HIDDEN_KEY, next ? '1' : '0')
+      return next
+    })
+  }
+
+  if (!session) return <LoginPage onLogin={handleLogin} />
+
   return (
     <div className="min-h-screen bg-background text-foreground lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden">
       <header className="workspace-header shrink-0">
@@ -655,15 +739,29 @@ function App() {
               </Button>
             ))}
           </nav>
-          <div className="header-status flex shrink-0 items-center gap-2 text-xs" role="status">
-            <Circle size={7} className="fill-current" />
-            <span>{loading ? 'Loading assets' : 'Ready'}</span>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <Button type="button" variant="nav" size="sm" onClick={toggleLeftCard} aria-pressed={leftCardHidden} title={leftCardHidden ? 'แสดง Check Asset' : 'ซ่อน Check Asset'}>
+              {leftCardHidden ? <PanelLeftOpen data-icon="inline-start" /> : <PanelLeftClose data-icon="inline-start" />}
+              <span className="hidden sm:inline">{leftCardHidden ? 'Show' : 'Hide'}</span>
+            </Button>
+            <div className="header-status flex items-center gap-2 text-xs" role="status">
+              <Circle size={7} className="fill-current" />
+              <span>{loading ? 'Loading assets' : 'Ready'}</span>
+            </div>
+            <div className="header-user flex min-w-0 items-center gap-2 text-xs" title={session.displayName || session.username}>
+              <UserRound size={15} className="shrink-0" />
+              <span className="max-w-32 truncate sm:max-w-44">{session.displayName || session.username}</span>
+            </div>
+            <Button type="button" variant="nav" size="sm" onClick={handleLogout} title="Logout" aria-label="Logout">
+              <LogOut data-icon="inline-start" />
+              <span className="hidden sm:inline">Logout</span>
+            </Button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto grid w-full max-w-[1920px] min-w-0 grid-cols-1 gap-5 p-4 sm:p-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[300px_minmax(0,1fr)] lg:p-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <aside aria-label="จัดการอุปกรณ์และการส่งออก" className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+      <main className={cn('workspace-layout', leftCardHidden && 'is-left-card-hidden')}>
+        <aside aria-label="จัดการอุปกรณ์และการส่งออก" aria-hidden={leftCardHidden} className="check-asset-panel">
           <Card>
             <CardHeader>
               <p className="eyebrow">AGENT TNLX</p>
@@ -842,7 +940,7 @@ function App() {
                 <TextField label="CPU" value={form.cpu_name} onChange={(value) => updateForm('cpu_name', value)} placeholder="12th Gen Intel i5-1235U" />
                 <TextField label="RAM (GB)" type="number" value={form.ram_total_gb} onChange={(value) => updateForm('ram_total_gb', value)} placeholder="16" />
               </FieldGroup></CardContent></Card>}
-              <Card size="sm"><CardHeader><CardTitle>รายละเอียดเพิ่มเติม</CardTitle><CardDescription>บันทึกลง Detail</CardDescription></CardHeader><CardContent><Field><FieldLabel htmlFor="asset-detail">Detail</FieldLabel><Textarea id="asset-detail" value={form.Detail} onChange={(event) => updateForm('Detail', event.target.value.toUpperCase())} rows={3} maxLength={100} className="min-h-24" /></Field></CardContent></Card>
+              <Card size="sm"><CardHeader><CardTitle>รายละเอียดเพิ่มเติม</CardTitle><CardDescription>บันทึกลง Detail และ Active</CardDescription><CardAction><ActiveSwitch value={form.Active} onChange={(value) => updateForm('Active', value)} /></CardAction></CardHeader><CardContent><Field><FieldLabel htmlFor="asset-detail">Detail</FieldLabel><Textarea id="asset-detail" value={form.Detail} onChange={(event) => updateForm('Detail', event.target.value.toUpperCase())} rows={3} maxLength={100} className="min-h-24" /></Field></CardContent></Card>
               <Card size="sm"><CardHeader><CardTitle>รูปภาพ</CardTitle><CardDescription>เลือกรูปหรือถ่ายภาพอุปกรณ์ สูงสุด 3 รูป</CardDescription></CardHeader><CardContent>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="upload-option"><ImageIcon size={24} /><span>เลือกรูปจากคลังภาพ</span><input type="file" accept="image/*" multiple className="sr-only" onChange={(event) => onImageSelect(event.target.files)} /></label>
@@ -885,6 +983,97 @@ function App() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+function LoginPage({ onLogin }: { onLogin: (session: LoginSession) => void }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSubmitting(true)
+    setError('')
+    try {
+      const res = await fetchWithTimeout(
+        mutationApiURL('/login'),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        },
+        20000,
+      )
+      const result: LoginResponse = await res.json().catch(() => ({}))
+      if (!res.ok || !result.success || !result.username || !result.token || !result.expiresAt) {
+        throw new Error(result.error || result.message || 'เข้าสู่ระบบไม่สำเร็จ')
+      }
+      const nextSession: LoginSession = {
+        username: result.username,
+        displayName: result.displayName || result.username,
+        role: result.role || 'user',
+        token: result.token,
+        expiresAt: result.expiresAt,
+      }
+      onLogin(nextSession)
+      const base = import.meta.env.BASE_URL || '/SSO_Check/'
+      window.location.href = `${base}?userCheck=${encodeURIComponent(result.username)}`
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'เข้าสู่ระบบไม่สำเร็จ')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <main className="login-shell">
+      <section className="login-brand-panel" aria-label="SSO CHECK">
+        <img src={`${import.meta.env.BASE_URL}tnlx.svg`} alt="TNLX" className="login-logo" />
+        <div className="login-brand-copy">
+          <p className="login-eyebrow">TNLX · SSO CHECK</p>
+          <h1>Sign in</h1>
+          <p>Manage your SSO Check asset workspace.</p>
+          <p>Use your Active Directory account to continue.</p>
+        </div>
+        <footer className="login-footer">
+          <span>TNLX COMPANY LIMITED</span>
+          <span>ACCOUNT SERVICES</span>
+        </footer>
+      </section>
+
+      <section className="login-form-panel" aria-labelledby="login-title">
+        <form className="login-card" onSubmit={submitLogin}>
+          <p className="login-card-kicker">TNLX</p>
+          <h2 id="login-title">SSO CHECK</h2>
+          <p className="login-card-description">ลงชื่อเข้าใช้ด้วยบัญชี AD เพื่อเข้าใช้งานระบบ</p>
+
+          <label className="login-field">
+            <span>USERNAME</span>
+            <Input value={username} onChange={(event) => setUsername(event.target.value.toUpperCase())} placeholder="TXXXX" autoComplete="username" autoFocus required />
+          </label>
+
+          <label className="login-field">
+            <span>PASSWORD</span>
+            <div className="login-password">
+              <Input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required />
+              <button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}>
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
+          </label>
+
+          {error && <p className="login-error" role="alert">{error}</p>}
+
+          <Button type="submit" size="lg" disabled={submitting} className="login-submit">
+            {submitting && <Loader2 data-icon="inline-start" className="animate-spin" />}
+            Sign In
+          </Button>
+        </form>
+      </section>
+    </main>
   )
 }
 
@@ -977,11 +1166,77 @@ function emptyForm(userCheck: string): FormState {
     ram_total_gb: '',
     Detail: '',
     user_check: userCheck,
+    Active: 'Y',
   }
+}
+
+function normalizeActive(value?: string | null) {
+  return String(value || 'Y').trim().toUpperCase() === 'N' ? 'N' : 'Y'
+}
+
+function ActiveSwitch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const enabled = normalizeActive(value) === 'Y'
+
+  return (
+    <button
+      type="button"
+      className="active-switch"
+      aria-label="สถานะการใช้งาน"
+      aria-pressed={enabled}
+      title={enabled ? 'ใช้งาน' : 'ไม่ได้ใช้งาน'}
+      onClick={() => onChange(enabled ? 'N' : 'Y')}
+    >
+      <span className="active-switch-track" aria-hidden="true"><span /></span>
+      {enabled ? <Unlock size={16} aria-hidden="true" /> : <Lock size={16} aria-hidden="true" />}
+      <span>{enabled ? 'Enabled' : 'Disabled'}</span>
+    </button>
+  )
 }
 
 function getUserCheck() {
   return new URLSearchParams(window.location.search).get('userCheck') || ''
+}
+
+function getInitialUserCheck() {
+  return loadLoginSession()?.username || getUserCheck() || ''
+}
+
+function loadLoginSession(): LoginSession | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_KEY)
+    if (!raw) return null
+    const session = JSON.parse(raw) as Partial<LoginSession>
+    if (!session.username || !session.token || !session.expiresAt) {
+      clearLoginSession()
+      return null
+    }
+    if (session.expiresAt * 1000 <= Date.now()) {
+      clearLoginSession()
+      return null
+    }
+    return {
+      username: String(session.username).toUpperCase(),
+      displayName: String(session.displayName || session.username),
+      role: String(session.role || 'user'),
+      token: String(session.token),
+      expiresAt: Number(session.expiresAt),
+    }
+  } catch {
+    clearLoginSession()
+    return null
+  }
+}
+
+function saveLoginSession(session: LoginSession) {
+  window.localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+}
+
+function clearLoginSession() {
+  window.localStorage.removeItem(SESSION_KEY)
+}
+
+function readLeftCardHidden() {
+  return window.localStorage.getItem(LEFT_CARD_HIDDEN_KEY) === '1'
 }
 
 function safeFilename(value: string) {

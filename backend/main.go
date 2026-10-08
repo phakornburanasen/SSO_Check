@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,15 +25,49 @@ import (
 	"time"
 
 	_ "github.com/denisenkom/go-mssqldb"
+	"github.com/go-ldap/ldap/v3"
 	"github.com/xuri/excelize/v2"
 )
 
 type app struct {
 	db          *sql.DB
+	vpnDB       *sql.DB
 	appRoot     string
 	uploadDir   string
 	uploadURL   string
 	allowedCORS string
+	auth        authConfig
+}
+
+type authConfig struct {
+	vpnLoginDSN string
+	ldapURL     string
+	ldapDomain  string
+	baseDN      string
+	bindPattern string
+	startTLS    bool
+	insecureTLS bool
+	tlsMin      uint16
+	tlsMax      uint16
+	timeout     time.Duration
+	jwtSecret   string
+	jwtTTL      time.Duration
+}
+
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	Success     bool   `json:"success"`
+	Username    string `json:"username,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Token       string `json:"token,omitempty"`
+	ExpiresAt   int64  `json:"expiresAt,omitempty"`
+	Message     string `json:"message,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type record struct {
@@ -48,6 +87,7 @@ type record struct {
 	ImagePNG       *string  `json:"img_png"`
 	StatusMac      *string  `json:"Status_mac"`
 	UserCheck      *string  `json:"user_check"`
+	Active         *string  `json:"Active"`
 }
 
 type diskRecord struct {
@@ -79,6 +119,20 @@ func main() {
 	}
 
 	appRoot := getenv("APP_ROOT", filepath.Clean(filepath.Join(wd, "..")))
+	exeDir := executableDir()
+	loadEnvFiles(
+		filepath.Join(exeDir, ".env"),
+		filepath.Join(appRoot, ".env"),
+		filepath.Join(appRoot, "backend", ".env"),
+		filepath.Join(wd, ".env"),
+		filepath.FromSlash("/opt/SSO_Check/.env"),
+		filepath.FromSlash("/opt/DOCUMENT/backend/.env"),
+		filepath.FromSlash("/var/www/SSO_Check/.env"),
+		filepath.FromSlash("/var/www/html/SSO_Check/.env"),
+		filepath.FromSlash("/var/www/DOCUMENT/backend/.env"),
+		filepath.FromSlash("/var/www/html/DOCUMENT/backend/.env"),
+		getenv("DOCUMENT_ENV_FILE", filepath.FromSlash("C:/Dev/DOCUMENT/backend/.env")),
+	)
 	uploadDir := getenv("UPLOAD_DIR", filepath.Join(appRoot, "uploads", "imgs"))
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		log.Fatalf("create upload dir: %v", err)
@@ -94,23 +148,44 @@ func main() {
 		log.Fatalf("connect database: %v", err)
 	}
 
+	authCfg := loadAuthConfig()
+	var vpnDB *sql.DB
+	if strings.TrimSpace(authCfg.vpnLoginDSN) != "" {
+		vpnDB, err = sql.Open("sqlserver", authCfg.vpnLoginDSN)
+		if err != nil {
+			log.Fatalf("open vpn login database: %v", err)
+		}
+		vpnCtx, vpnCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer vpnCancel()
+		if err := vpnDB.PingContext(vpnCtx); err != nil {
+			log.Fatalf("connect vpn login database: %v", err)
+		}
+	} else {
+		log.Print("VPN_LOGIN_DSN is not set; login endpoint will return service unavailable")
+	}
+
 	a := &app{
 		db:          db,
+		vpnDB:       vpnDB,
 		appRoot:     appRoot,
 		uploadDir:   uploadDir,
 		uploadURL:   strings.Trim(getenv("UPLOAD_URL", "uploads/imgs/"), "/") + "/",
 		allowedCORS: getenv("CORS_ORIGIN", "*"),
+		auth:        authCfg,
 	}
 
 	mux := http.NewServeMux()
 	uploadFiles := http.FileServer(http.Dir(filepath.Dir(uploadDir)))
 	mux.HandleFunc("/health", a.withCORS(a.health))
+	mux.HandleFunc("/login", a.withCORS(a.login))
 	mux.HandleFunc("/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/export", a.withCORS(a.exportExcel))
+	mux.HandleFunc("/api/login", a.withCORS(a.login))
 	mux.HandleFunc("/api/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/export", a.withCORS(a.exportExcel))
 	mux.HandleFunc("/uploads/", a.withCORS(http.StripPrefix("/uploads/", uploadFiles).ServeHTTP))
 	mux.HandleFunc("/api/SSO_Check/health", a.withCORS(a.health))
+	mux.HandleFunc("/api/SSO_Check/login", a.withCORS(a.login))
 	mux.HandleFunc("/api/SSO_Check/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/SSO_Check/export", a.withCORS(a.exportExcel))
 	mux.HandleFunc("/api/SSO_Check/uploads/", a.withCORS(http.StripPrefix("/api/SSO_Check/uploads/", uploadFiles).ServeHTTP))
@@ -161,6 +236,42 @@ func buildDSN() string {
 	return u.String()
 }
 
+func loadAuthConfig() authConfig {
+	timeoutSec, err := strconv.Atoi(getenv("AD_LDAP_TIMEOUT_SEC", "5"))
+	if err != nil || timeoutSec <= 0 {
+		timeoutSec = 5
+	}
+	jwtTTLMinutes, err := strconv.Atoi(getenv("JWT_TTL_MINUTES", "480"))
+	if err != nil || jwtTTLMinutes <= 0 {
+		jwtTTLMinutes = 480
+	}
+	ldapURL := strings.TrimSpace(os.Getenv("AD_LDAP_URL"))
+	if ldapURL == "" {
+		ldapURL = strings.TrimSpace(os.Getenv("AD1_SERVER"))
+	}
+	baseDN := strings.TrimSpace(firstNonEmpty(os.Getenv("AD2_BASE_DN"), os.Getenv("AD1_ROOT_DN"), os.Getenv("AD1_BASE_DN")))
+	ldapDomain := strings.TrimSpace(os.Getenv("AD_LDAP_DOMAIN"))
+	if ldapDomain == "" {
+		ldapDomain = suffixFromDN(baseDN)
+	}
+	tlsMin := tlsVersionEnv("AD_TLS_MIN_VERSION", tls.VersionTLS12)
+	tlsMax := tlsVersionEnv("AD_TLS_MAX_VERSION", 0)
+	return authConfig{
+		vpnLoginDSN: strings.TrimSpace(os.Getenv("VPN_LOGIN_DSN")),
+		ldapURL:     ldapURL,
+		ldapDomain:  ldapDomain,
+		baseDN:      baseDN,
+		bindPattern: strings.TrimSpace(os.Getenv("AD_LDAP_BIND_PATTERN")),
+		startTLS:    boolEnv("AD_LDAP_START_TLS", false),
+		insecureTLS: boolEnv("AD_LDAP_INSECURE_TLS", boolEnv("AD_TLS_INSECURE", false)),
+		tlsMin:      tlsMin,
+		tlsMax:      tlsMax,
+		timeout:     time.Duration(timeoutSec) * time.Second,
+		jwtSecret:   strings.TrimSpace(getenv("JWT_SECRET", "dev-only-change-me-please-32-bytes-min!!")),
+		jwtTTL:      time.Duration(jwtTTLMinutes) * time.Minute,
+	}
+}
+
 func (a *app) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -180,6 +291,61 @@ func (a *app) withCORS(next http.HandlerFunc) http.HandlerFunc {
 
 func (a *app) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	var in loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, loginResponse{Success: false, Error: "Invalid JSON data"})
+		return
+	}
+
+	username := normalizeADUsername(in.Username)
+	if username == "" || strings.TrimSpace(in.Password) == "" {
+		writeJSON(w, http.StatusUnauthorized, loginResponse{Success: false, Error: "Username or password is invalid"})
+		return
+	}
+	if len(username) > 50 {
+		writeJSON(w, http.StatusBadRequest, loginResponse{Success: false, Error: "Username is too long"})
+		return
+	}
+
+	displayName, err := a.authenticateAD(r.Context(), username, in.Password)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errInvalidCredentials) {
+			status = http.StatusUnauthorized
+		} else if errors.Is(err, errAuthNotReady) {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, loginResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	role, err := a.checkLoginPermission(r.Context(), username)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errNoPermission) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, errAuthNotReady) {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, loginResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	token, expiresAt, err := a.issueLoginToken(username, displayName, role)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, loginResponse{Success: false, Error: "Cannot create login session"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, loginResponse{Success: true, Username: username, DisplayName: displayName, Role: role, Token: token, ExpiresAt: expiresAt, Message: "Login successful"})
 }
 
 func (a *app) agents(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +397,7 @@ func (a *app) exportExcel(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) exportRecords(ctx context.Context, userChecks []string) ([]record, error) {
 	query := `SELECT id, created_at, hostname, ip_address, username, windows_version, cpu_name, ram_total_gb,
-Office_Version, Detail, Users, Dep, asset_no, img_png, Status_mac, user_check FROM Agent_TNLX`
+Office_Version, Detail, Users, Dep, asset_no, img_png, Status_mac, user_check, Active FROM Agent_TNLX`
 	args := []any{}
 	if len(userChecks) > 0 {
 		placeholders := make([]string, len(userChecks))
@@ -576,7 +742,7 @@ func (a *app) getAgents(w http.ResponseWriter, r *http.Request) {
 func (a *app) readRecords(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("Status_mac")
 	query := `SELECT id, created_at, hostname, ip_address, username, windows_version, cpu_name, ram_total_gb,
-Office_Version, Detail, Users, Dep, asset_no, img_png, Status_mac, user_check FROM Agent_TNLX`
+Office_Version, Detail, Users, Dep, asset_no, img_png, Status_mac, user_check, Active FROM Agent_TNLX`
 	args := []any{}
 	if status != "" {
 		query += " WHERE Status_mac = @p1"
@@ -611,7 +777,7 @@ func (a *app) getRecord(w http.ResponseWriter, r *http.Request) {
 	}
 
 	row := a.db.QueryRowContext(r.Context(), `SELECT id, created_at, hostname, ip_address, username, windows_version, cpu_name, ram_total_gb,
-Office_Version, Detail, Users, Dep, asset_no, img_png, Status_mac, user_check FROM Agent_TNLX WHERE id = @p1`, id)
+Office_Version, Detail, Users, Dep, asset_no, img_png, Status_mac, user_check, Active FROM Agent_TNLX WHERE id = @p1`, id)
 	rec, err := scanRecord(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "Not found"})
@@ -728,15 +894,16 @@ func (a *app) saveRecordValues(w http.ResponseWriter, r *http.Request, action st
 		"Dep":             nullable(values["Dep"]),
 		"asset_no":        nullable(values["asset_no"]),
 		"img_png":         nullable(strings.Join(allImages, ",")),
+		"Active":          activeValue(values["Active"]),
 	}
 
 	imgInfo := imageInfo{ImagesCount: len(allImages), ImagesAdded: len(newImages), UploadErrors: uploadErrors}
 	if action == "create" || (action == "update" && id == 0) {
 		_, err := a.db.ExecContext(r.Context(), `INSERT INTO Agent_TNLX
-(hostname, ip_address, username, windows_version, cpu_name, ram_total_gb, Status_mac, user_check, Office_Version, Detail, Users, Dep, asset_no, img_png, created_at, updated_at)
-VALUES (@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10,@p11,@p12,@p13,@p14,GETDATE(),GETDATE())`,
+(hostname, ip_address, username, windows_version, cpu_name, ram_total_gb, Status_mac, user_check, Office_Version, Detail, Users, Dep, asset_no, img_png, Active, created_at, updated_at)
+VALUES (@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10,@p11,@p12,@p13,@p14,@p15,GETDATE(),GETDATE())`,
 			form["hostname"], form["ip_address"], form["username"], form["windows_version"], form["cpu_name"],
-			form["ram_total_gb"], form["Status_mac"], form["user_check"], form["Office_Version"], form["Detail"], form["Users"], form["Dep"], form["asset_no"], form["img_png"])
+			form["ram_total_gb"], form["Status_mac"], form["user_check"], form["Office_Version"], form["Detail"], form["Users"], form["Dep"], form["asset_no"], form["img_png"], form["Active"])
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, mutationResponse{Success: false, Message: "DB Error: " + err.Error()})
 			return
@@ -751,10 +918,10 @@ VALUES (@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10,@p11,@p12,@p13,@p14,GETDATE(),G
 	}
 	_, err := a.db.ExecContext(r.Context(), `UPDATE Agent_TNLX SET
 hostname=@p1, ip_address=@p2, username=@p3, windows_version=@p4, cpu_name=@p5, ram_total_gb=@p6,
-Status_mac=@p7, user_check=@p8, Office_Version=@p9, Detail=@p10, Users=@p11, Dep=@p12, asset_no=@p13, img_png=@p14, updated_at=GETDATE()
-WHERE id=@p15`,
+Status_mac=@p7, user_check=@p8, Office_Version=@p9, Detail=@p10, Users=@p11, Dep=@p12, asset_no=@p13, img_png=@p14, Active=@p15, updated_at=GETDATE()
+WHERE id=@p16`,
 		form["hostname"], form["ip_address"], form["username"], form["windows_version"], form["cpu_name"],
-		form["ram_total_gb"], form["Status_mac"], form["user_check"], form["Office_Version"], form["Detail"], form["Users"], form["Dep"], form["asset_no"], form["img_png"], id)
+		form["ram_total_gb"], form["Status_mac"], form["user_check"], form["Office_Version"], form["Detail"], form["Users"], form["Dep"], form["asset_no"], form["img_png"], form["Active"], id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, mutationResponse{Success: false, Message: "DB Error: " + err.Error()})
 		return
@@ -831,12 +998,186 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+var (
+	errAuthNotReady       = errors.New("login service is not configured")
+	errInvalidCredentials = errors.New("username or password is invalid")
+	errNoPermission       = errors.New("บัญชี AD นี้ไม่มีสิทธิ์เข้าใช้งานระบบ")
+)
+
+func (a *app) authenticateAD(ctx context.Context, username, password string) (string, error) {
+	if strings.TrimSpace(a.auth.ldapURL) == "" {
+		return "", fmt.Errorf("%w: AD_LDAP_URL or AD1_SERVER is required", errAuthNotReady)
+	}
+	bindUser, err := a.bindUsername(username)
+	if err != nil {
+		return "", err
+	}
+
+	tlsConfig := a.ldapTLSConfig()
+	conn, err := ldap.DialURL(
+		a.auth.ldapURL,
+		ldap.DialWithDialer(&net.Dialer{Timeout: a.auth.timeout}),
+		ldap.DialWithTLSConfig(tlsConfig),
+	)
+	if err != nil {
+		return "", fmt.Errorf("ไม่สามารถเชื่อมต่อ AD/LDAP ได้: %w", err)
+	}
+	defer conn.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetTimeout(time.Until(deadline))
+	} else {
+		conn.SetTimeout(a.auth.timeout)
+	}
+
+	if a.auth.startTLS {
+		if err := conn.StartTLS(tlsConfig); err != nil {
+			return "", fmt.Errorf("ไม่สามารถเริ่ม LDAP StartTLS ได้: %w", err)
+		}
+	}
+
+	if err := conn.Bind(bindUser, password); err != nil {
+		var ldapErr *ldap.Error
+		if errors.As(err, &ldapErr) && ldapErr.ResultCode == ldap.LDAPResultInvalidCredentials {
+			return "", errInvalidCredentials
+		}
+		return "", fmt.Errorf("ตรวจสอบ AD/LDAP ไม่สำเร็จ: %w", err)
+	}
+	return a.lookupDisplayName(conn, username), nil
+}
+
+func (a *app) lookupDisplayName(conn *ldap.Conn, username string) string {
+	if strings.TrimSpace(a.auth.baseDN) == "" {
+		return username
+	}
+	search := ldap.NewSearchRequest(
+		a.auth.baseDN,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		1,
+		int(a.auth.timeout.Seconds()),
+		false,
+		fmt.Sprintf("(sAMAccountName=%s)", ldap.EscapeFilter(username)),
+		[]string{"displayName", "cn"},
+		nil,
+	)
+	result, err := conn.Search(search)
+	if err != nil || len(result.Entries) == 0 {
+		return username
+	}
+	displayName := strings.TrimSpace(result.Entries[0].GetAttributeValue("displayName"))
+	if displayName == "" {
+		displayName = strings.TrimSpace(result.Entries[0].GetAttributeValue("cn"))
+	}
+	if displayName == "" {
+		return username
+	}
+	return displayName
+}
+
+func (a *app) issueLoginToken(username, displayName, role string) (string, int64, error) {
+	secret := strings.TrimSpace(a.auth.jwtSecret)
+	if secret == "" {
+		return "", 0, fmt.Errorf("%w: JWT_SECRET is required", errAuthNotReady)
+	}
+	now := time.Now()
+	expiresAt := now.Add(a.auth.jwtTTL).Unix()
+	header := map[string]string{"alg": "HS256", "typ": "JWT"}
+	payload := map[string]any{
+		"sub":  username,
+		"name": displayName,
+		"role": role,
+		"iat":  now.Unix(),
+		"exp":  expiresAt,
+	}
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		return "", 0, err
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", 0, err
+	}
+	unsigned := base64.RawURLEncoding.EncodeToString(headerJSON) + "." + base64.RawURLEncoding.EncodeToString(payloadJSON)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(unsigned))
+	token := unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return token, expiresAt, nil
+}
+
+func (a *app) bindUsername(username string) (string, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", errInvalidCredentials
+	}
+	if a.auth.bindPattern != "" {
+		if !strings.Contains(a.auth.bindPattern, "%s") {
+			return "", fmt.Errorf("%w: AD_LDAP_BIND_PATTERN must contain %%s", errAuthNotReady)
+		}
+		return fmt.Sprintf(a.auth.bindPattern, username), nil
+	}
+	if a.auth.ldapDomain == "" {
+		return "", fmt.Errorf("%w: AD_LDAP_DOMAIN or AD_LDAP_BIND_PATTERN is required", errAuthNotReady)
+	}
+	return username + "@" + a.auth.ldapDomain, nil
+}
+
+func (a *app) ldapTLSConfig() *tls.Config {
+	cfg := &tls.Config{
+		MinVersion:         a.auth.tlsMin,
+		MaxVersion:         a.auth.tlsMax,
+		InsecureSkipVerify: a.auth.insecureTLS,
+	}
+	if parsed, err := url.Parse(a.auth.ldapURL); err == nil {
+		cfg.ServerName = parsed.Hostname()
+	}
+	return cfg
+}
+
+func (a *app) checkLoginPermission(ctx context.Context, username string) (string, error) {
+	if a.vpnDB == nil || strings.TrimSpace(a.auth.vpnLoginDSN) == "" {
+		return "", fmt.Errorf("%w: VPN_LOGIN_DSN is required", errAuthNotReady)
+	}
+
+	var adUser, status, role sql.NullString
+	err := a.vpnDB.QueryRowContext(ctx, `
+SELECT ADUser, status, role
+FROM dbo.vpn_login
+WHERE UPPER(ADUser) = @p1`, username).Scan(&adUser, &status, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errNoPermission
+	}
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(strings.TrimSpace(status.String), "ACTIVE") {
+		return "", errNoPermission
+	}
+	normalizedRole := strings.ToLower(strings.TrimSpace(role.String))
+	if normalizedRole == "" {
+		normalizedRole = "user"
+	}
+	return normalizedRole, nil
+}
+
+func normalizeADUsername(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, `\`) {
+		parts := strings.Split(value, `\`)
+		value = parts[len(parts)-1]
+	}
+	if at := strings.Index(value, "@"); at >= 0 {
+		value = value[:at]
+	}
+	return strings.ToUpper(strings.TrimSpace(value))
+}
+
 func scanRecord(row scanner) (record, error) {
 	var rec record
-	var hostname, ip, username, win, cpu, office, detail, users, dep, assetNo, img, status, userCheck sql.NullString
+	var hostname, ip, username, win, cpu, office, detail, users, dep, assetNo, img, status, userCheck, active sql.NullString
 	var ram sql.NullFloat64
 	var createdAt sql.NullTime
-	err := row.Scan(&rec.ID, &createdAt, &hostname, &ip, &username, &win, &cpu, &ram, &office, &detail, &users, &dep, &assetNo, &img, &status, &userCheck)
+	err := row.Scan(&rec.ID, &createdAt, &hostname, &ip, &username, &win, &cpu, &ram, &office, &detail, &users, &dep, &assetNo, &img, &status, &userCheck, &active)
 	if err != nil {
 		return rec, err
 	}
@@ -855,6 +1196,7 @@ func scanRecord(row scanner) (record, error) {
 	rec.ImagePNG = nullStringPtr(img)
 	rec.StatusMac = nullStringPtr(status)
 	rec.UserCheck = nullStringPtr(userCheck)
+	rec.Active = nullStringPtr(active)
 	return rec, nil
 }
 
@@ -918,6 +1260,13 @@ func nullable(value string) any {
 		return nil
 	}
 	return value
+}
+
+func activeValue(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "N") {
+		return "N"
+	}
+	return "Y"
 }
 
 func nullableFloat(value string) any {
@@ -989,4 +1338,96 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func executableDir() string {
+	exePath, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exePath)
+}
+
+func loadEnvFiles(paths ...string) {
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err == nil {
+			loadEnvFile(path)
+			return
+		}
+	}
+}
+
+func loadEnvFile(path string) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, raw := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, value)
+		}
+	}
+}
+
+func boolEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func tlsVersionEnv(key string, fallback uint16) uint16 {
+	switch strings.TrimSpace(os.Getenv(key)) {
+	case "1.0":
+		return tls.VersionTLS10
+	case "1.1":
+		return tls.VersionTLS11
+	case "1.2":
+		return tls.VersionTLS12
+	case "1.3":
+		return tls.VersionTLS13
+	default:
+		return fallback
+	}
+}
+
+func suffixFromDN(dn string) string {
+	labels := []string{}
+	for _, part := range strings.Split(dn, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if ok && strings.EqualFold(key, "DC") {
+			labels = append(labels, value)
+		}
+	}
+	return strings.Join(labels, ".")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

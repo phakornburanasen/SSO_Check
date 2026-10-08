@@ -45,7 +45,7 @@ if ($method === 'GET') {
     if ($action === 'read') {
         $status = isset($_GET['Status_mac']) ? $_GET['Status_mac'] : '';
         $sql = "SELECT id, hostname, ip_address, username, windows_version, cpu_name, ram_total_gb,
-                       Office_Version, Detail, Users, img_png, Status_mac, user_check
+                       Office_Version, Detail, Users, img_png, Status_mac, user_check, Active
                 FROM Agent_TNLX";
         if ($status !== '') { $sql .= " WHERE Status_mac = ?"; }
         $sql .= " ORDER BY id DESC";
@@ -101,6 +101,7 @@ if ($method === 'POST') {
     $windows_version = isset($_POST['windows_version']) ? $_POST['windows_version'] : '';
     $Office_Version = isset($_POST['Office_Version']) ? $_POST['Office_Version'] : '';
     $user_check = isset($_POST['user_check']) ? $_POST['user_check'] : '';
+    $Active = (isset($_POST['Active']) && strtoupper(trim($_POST['Active'])) === 'N') ? 'N' : 'Y';
 
     $ram_raw = isset($_POST['ram_total_gb']) ? $_POST['ram_total_gb'] : '';
     $ram_val = ($ram_raw !== '' && $ram_raw !== null) ? (float)$ram_raw : null;
@@ -187,8 +188,8 @@ if ($method === 'POST') {
 try {
         if ($action === 'create' || ($action === 'update' && $id === 0)) {
             $sql = "INSERT INTO Agent_TNLX (hostname, ip_address, username, windows_version, cpu_name,
-                    ram_total_gb, Status_mac, user_check, Office_Version, Detail, Users, img_png)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)";
+                    ram_total_gb, Status_mac, user_check, Office_Version, Detail, Users, img_png, Active)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
             $stmt = $pdo->prepare($sql);
             $stmt->execute(array(
                 ($hostname !== '') ? $hostname : null,
@@ -202,7 +203,8 @@ try {
                 ($Office_Version !== '') ? $Office_Version : null,
                 ($Detail !== '') ? $Detail : null,
                 ($Users !== '') ? $Users : null,
-                ($img_png !== '') ? $img_png : null
+                ($img_png !== '') ? $img_png : null,
+                $Active
             ));
             jsonResponse(array('success' => true, 'message' => 'เพิ่มข้อมูลเรียบร้อย', 'images' => $imgInfo), 200);
         }
@@ -211,7 +213,7 @@ try {
             $sql = "UPDATE Agent_TNLX SET
                     hostname=?, ip_address=?, username=?, windows_version=?, cpu_name=?,
                     ram_total_gb=?, Status_mac=?, user_check=?, Office_Version=?, Detail=?, Users=?,
-                    img_png=?, updated_at=GETDATE()
+                    img_png=?, Active=?, updated_at=GETDATE()
                     WHERE id=?";
             $stmt = $pdo->prepare($sql);
             $stmt->execute(array(
@@ -227,6 +229,7 @@ try {
                 ($Detail !== '') ? $Detail : null,
                 ($Users !== '') ? $Users : null,
                 ($img_png !== '') ? $img_png : null,
+                $Active,
                 $id
             ));
             jsonResponse(array('success' => true, 'message' => 'อัปเดตข้อมูลเรียบร้อย', 'images' => $imgInfo), 200);

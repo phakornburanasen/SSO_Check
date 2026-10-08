@@ -22,6 +22,38 @@ mkdir -p "$OUT/frontend"
 cp -R "$ROOT/frontend/dist" "$OUT/frontend/dist"
 mkdir -p "$OUT/uploads/imgs"
 
+ENV_SOURCE=""
+for candidate in "$ROOT/.env" "$ROOT/backend/.env" "${DOCUMENT_ENV_FILE:-}" "C:/Dev/DOCUMENT/backend/.env"; do
+  if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+    ENV_SOURCE="$candidate"
+    break
+  fi
+done
+if [ -n "$ENV_SOURCE" ]; then
+  cp "$ENV_SOURCE" "$OUT/.env"
+  echo "Copied environment file to $OUT/.env"
+else
+  cat > "$OUT/.env.example" <<'ENV'
+PORT=10100
+DB_SERVER=10.0.32.165
+DB_NAME=SSO_Agent_tnlx
+DB_USER=sa
+DB_PASS=
+DB_ENCRYPT=disable
+DB_TRUST_SERVER_CERTIFICATE=true
+VPN_LOGIN_DSN=sqlserver://user:password@server:1433?database=vpn_documents&encrypt=disable&TrustServerCertificate=true
+AD_LDAP_URL=ldaps://ad.example.local
+AD_LDAP_DOMAIN=thanulux.local
+AD_LDAP_BIND_PATTERN=
+AD_LDAP_START_TLS=false
+AD_LDAP_INSECURE_TLS=true
+AD_LDAP_TIMEOUT_SEC=5
+JWT_SECRET=change-me-please-use-a-long-random-secret
+JWT_TTL_MINUTES=480
+ENV
+  echo "No .env found. Created $OUT/.env.example; copy it to .env and fill AD/VPN settings before login."
+fi
+
 cat > "$OUT/start-production.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
