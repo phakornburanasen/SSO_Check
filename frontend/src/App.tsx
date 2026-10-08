@@ -1,6 +1,7 @@
 ﻿import { useEffect, useId, useMemo, useState } from 'react'
 import {
   Camera,
+  BarChart3,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -116,6 +117,23 @@ type LoginSession = {
   expiresAt: number
 }
 
+type ActivityReportRecord = {
+  title?: string | null
+  Activity_Code?: string | null
+  Provider?: string | null
+  Provider_Department?: string | null
+  Activity_Name?: string | null
+  Unit?: string | null
+  Rate?: number | null
+  Year?: string | null
+  Month?: string | null
+  Department?: string | null
+  Qty?: number | null
+  Amount?: number | null
+}
+
+type WorkspaceView = 'assets' | 'reports'
+
 type CropReplaceTarget = { kind: 'pending'; index: number } | { kind: 'existing'; src: string }
 
 type CropQueueItem = {
@@ -182,6 +200,25 @@ const officeOptions = [
 const inputClass = 'native-select'
 const SAVE_NOTICE_MS = 5000
 const pageSizeOptions = [10, 25, 50, 100]
+const monthOptions = [
+  { value: '', label: 'ทุกเดือน' },
+  ...Array.from({ length: 12 }, (_, index) => ({ value: String(index + 1), label: String(index + 1).padStart(2, '0') })),
+]
+
+const reportColumns: { key: keyof ActivityReportRecord; label: string; align?: 'right' }[] = [
+  { key: 'title', label: 'title' },
+  { key: 'Activity_Code', label: 'Activity Code' },
+  { key: 'Provider', label: 'Provider' },
+  { key: 'Provider_Department', label: 'Provider_Department' },
+  { key: 'Activity_Name', label: 'Activity_Name' },
+  { key: 'Unit', label: 'Unit' },
+  { key: 'Rate', label: 'Rate', align: 'right' },
+  { key: 'Year', label: 'Year' },
+  { key: 'Month', label: 'Month' },
+  { key: 'Department', label: 'Department' },
+  { key: 'Qty', label: 'Qty', align: 'right' },
+  { key: 'Amount', label: 'Amount', align: 'right' },
+]
 
 function App() {
   const [records, setRecords] = useState<AgentRecord[]>([])
@@ -215,6 +252,17 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1)
   const [session, setSession] = useState<LoginSession | null>(() => loadLoginSession())
   const [leftCardHidden, setLeftCardHidden] = useState(() => readLeftCardHidden())
+  const [activeView, setActiveView] = useState<WorkspaceView>('assets')
+  const [reportRecords, setReportRecords] = useState<ActivityReportRecord[]>([])
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportRefreshing, setReportRefreshing] = useState(false)
+  const [reportError, setReportError] = useState('')
+  const [reportMessage, setReportMessage] = useState('')
+  const [reportYear, setReportYear] = useState('')
+  const [reportMonth, setReportMonth] = useState('')
+  const [reportSearch, setReportSearch] = useState('')
+  const [reportPageSize, setReportPageSize] = useState(10)
+  const [reportCurrentPage, setReportCurrentPage] = useState(1)
 
   const queryUserCheck = useMemo(() => getUserCheck(), [])
   const userCheck = session?.username || queryUserCheck || ''
@@ -231,6 +279,11 @@ function App() {
     if (!userCheck) return
     loadExportUserChecks()
   }, [userCheck])
+
+  useEffect(() => {
+    if (!userCheck || activeView !== 'reports') return
+    loadActivityReport()
+  }, [activeView, userCheck, reportYear, reportMonth])
 
   useEffect(() => {
     if (!session) return
@@ -259,6 +312,12 @@ function App() {
     const timer = window.setTimeout(() => setMessage(''), SAVE_NOTICE_MS)
     return () => window.clearTimeout(timer)
   }, [message])
+
+  useEffect(() => {
+    if (!reportMessage) return
+    const timer = window.setTimeout(() => setReportMessage(''), SAVE_NOTICE_MS)
+    return () => window.clearTimeout(timer)
+  }, [reportMessage])
 
   const currentCropItem = cropQueue[0] || null
 
@@ -305,6 +364,27 @@ function App() {
   const pageEnd = Math.min(pageStart + pageSize, visibleRecords.length)
   const pagedRecords = visibleRecords.slice(pageStart, pageEnd)
   const paginationItems = getPaginationItems(safeCurrentPage, totalPages)
+  const visibleReportRecords = reportRecords.filter((row) => {
+    const searchText = reportSearch.trim().toLowerCase()
+    if (!searchText) return true
+    return reportColumns
+      .map((column) => row[column.key])
+      .filter((value) => value != null)
+      .join(' ')
+      .toLowerCase()
+      .includes(searchText)
+  })
+  const reportTotalQty = reportRecords.reduce((sum, row) => sum + numberValue(row.Qty), 0)
+  const reportTotalAmount = reportRecords.reduce((sum, row) => sum + numberValue(row.Amount), 0)
+  const reportDepartmentCount = new Set(reportRecords.map((row) => String(row.Department || '').trim()).filter(Boolean)).size
+  const reportChartData = buildDepartmentQtyChart(reportRecords)
+  const reportMaxQty = Math.max(1, ...reportChartData.map((item) => item.qty))
+  const reportTotalPages = Math.max(1, Math.ceil(visibleReportRecords.length / reportPageSize))
+  const safeReportCurrentPage = Math.min(reportCurrentPage, reportTotalPages)
+  const reportPageStart = visibleReportRecords.length === 0 ? 0 : (safeReportCurrentPage - 1) * reportPageSize
+  const reportPageEnd = Math.min(reportPageStart + reportPageSize, visibleReportRecords.length)
+  const pagedReportRecords = visibleReportRecords.slice(reportPageStart, reportPageEnd)
+  const reportPaginationItems = getPaginationItems(safeReportCurrentPage, reportTotalPages)
 
   async function loadRecords(nextFilter = filter, options: { silent?: boolean } = {}) {
     const silent = options.silent ?? records.length > 0
@@ -343,6 +423,34 @@ function App() {
       setExportUserCheckOptions(options)
     } catch {
       setExportUserCheckOptions([])
+    }
+  }
+
+  async function loadActivityReport(options: { silent?: boolean } = {}) {
+    const silent = options.silent ?? reportRecords.length > 0
+    if (silent) {
+      setReportRefreshing(true)
+    } else {
+      setReportLoading(true)
+    }
+    setReportError('')
+    try {
+      const params = new URLSearchParams()
+      if (reportYear.trim()) params.set('year', reportYear.trim())
+      if (reportMonth.trim()) params.set('month', reportMonth.trim())
+      const res = await fetch(apiURL(`/reports/activity${params.toString() ? `?${params}` : ''}`))
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'โหลดรายงานไม่สำเร็จ')
+      setReportRecords(data)
+      setReportCurrentPage(1)
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'โหลดรายงานไม่สำเร็จ')
+    } finally {
+      if (silent) {
+        setReportRefreshing(false)
+      } else {
+        setReportLoading(false)
+      }
     }
   }
 
@@ -671,6 +779,39 @@ function App() {
     }
   }
 
+  async function exportActivityReport() {
+    setReportError('')
+    setReportMessage('')
+    try {
+      const params = new URLSearchParams()
+      if (reportYear.trim()) params.set('year', reportYear.trim())
+      if (reportMonth.trim()) params.set('month', reportMonth.trim())
+      const res = await fetch(mutationApiURL(`/reports/activity/export${params.toString() ? `?${params}` : ''}`))
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Export Excel ไม่สำเร็จ')
+      }
+      const blob = await res.blob()
+      const suffix = reportYear.trim() && reportMonth.trim()
+        ? `_${safeFilename(reportYear.trim())}_${safeFilename(reportMonth.trim())}`
+        : reportYear.trim()
+          ? `_${safeFilename(reportYear.trim())}`
+          : ''
+      const filename = `SSO_Check_Report${suffix}.xlsx`
+      const href = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = href
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(href)
+      setReportMessage(`Export ${filename} สำเร็จ`)
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Export Excel ไม่สำเร็จ')
+    }
+  }
+
   function buildFormData() {
     const data = new FormData()
     Object.entries(form).forEach(([key, value]) => data.append(key, value))
@@ -733,20 +874,22 @@ function App() {
             </div>
           </div>
           <nav aria-label="เมนูหลัก" className="hidden items-center gap-2 md:flex">
-            {['Tools', 'Assets', 'Reports'].map((item, index) => (
-              <Button key={item} type="button" variant={index === 1 ? 'nav-active' : 'nav'} aria-current={index === 1 ? 'page' : undefined}>
-                {index === 1 && <LayoutGrid data-icon="inline-start" />}{item}
-              </Button>
-            ))}
+            <Button type="button" variant="nav">Tools</Button>
+            <Button type="button" variant={activeView === 'assets' ? 'nav-active' : 'nav'} aria-current={activeView === 'assets' ? 'page' : undefined} onClick={() => setActiveView('assets')}>
+              <LayoutGrid data-icon="inline-start" />Assets
+            </Button>
+            <Button type="button" variant={activeView === 'reports' ? 'nav-active' : 'nav'} aria-current={activeView === 'reports' ? 'page' : undefined} onClick={() => setActiveView('reports')}>
+              <BarChart3 data-icon="inline-start" />Reports
+            </Button>
           </nav>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <Button type="button" variant="nav" size="sm" onClick={toggleLeftCard} aria-pressed={leftCardHidden} title={leftCardHidden ? 'แสดง Check Asset' : 'ซ่อน Check Asset'}>
+            {activeView === 'assets' && <Button type="button" variant="nav" size="sm" onClick={toggleLeftCard} aria-pressed={leftCardHidden} title={leftCardHidden ? 'แสดง Check Asset' : 'ซ่อน Check Asset'}>
               {leftCardHidden ? <PanelLeftOpen data-icon="inline-start" /> : <PanelLeftClose data-icon="inline-start" />}
               <span className="hidden sm:inline">{leftCardHidden ? 'Show' : 'Hide'}</span>
-            </Button>
+            </Button>}
             <div className="header-status flex items-center gap-2 text-xs" role="status">
               <Circle size={7} className="fill-current" />
-              <span>{loading ? 'Loading assets' : 'Ready'}</span>
+              <span>{activeView === 'reports' ? (reportLoading ? 'Loading reports' : 'Ready') : (loading ? 'Loading assets' : 'Ready')}</span>
             </div>
             <div className="header-user flex min-w-0 items-center gap-2 text-xs" title={session.displayName || session.username}>
               <UserRound size={15} className="shrink-0" />
@@ -760,8 +903,8 @@ function App() {
         </div>
       </header>
 
-      <main className={cn('workspace-layout', leftCardHidden && 'is-left-card-hidden')}>
-        <aside aria-label="จัดการอุปกรณ์และการส่งออก" aria-hidden={leftCardHidden} className="check-asset-panel">
+      <main className={cn('workspace-layout', (activeView === 'reports' || leftCardHidden) && 'is-left-card-hidden')}>
+        {activeView === 'assets' && <aside aria-label="จัดการอุปกรณ์และการส่งออก" aria-hidden={leftCardHidden} className="check-asset-panel">
           <Card>
             <CardHeader>
               <p className="eyebrow">AGENT TNLX</p>
@@ -826,9 +969,9 @@ function App() {
               <div className="min-w-0"><p className="eyebrow">SESSION</p><p className="mt-1 truncate text-sm font-medium">{userCheck || '-'} <span className="ml-1 text-xs font-normal text-muted-foreground">User check</span></p></div>
             </CardFooter>
           </Card>
-        </aside>
+        </aside>}
 
-        <Card className="min-w-0 gap-0 lg:min-h-0 lg:overflow-hidden">
+        {activeView === 'assets' ? <Card className="min-w-0 gap-0 lg:min-h-0 lg:overflow-hidden">
           <CardHeader className="shrink-0 gap-4 pb-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -902,7 +1045,36 @@ function App() {
               </nav>
             </div>
           </CardFooter>
-        </Card>
+        </Card> : <ReportView
+          records={reportRecords}
+          visibleRecords={visibleReportRecords}
+          pagedRecords={pagedReportRecords}
+          chartData={reportChartData}
+          maxQty={reportMaxQty}
+          totalQty={reportTotalQty}
+          totalAmount={reportTotalAmount}
+          departmentCount={reportDepartmentCount}
+          loading={reportLoading}
+          refreshing={reportRefreshing}
+          error={reportError}
+          message={reportMessage}
+          year={reportYear}
+          month={reportMonth}
+          search={reportSearch}
+          pageSize={reportPageSize}
+          pageStart={reportPageStart}
+          pageEnd={reportPageEnd}
+          currentPage={safeReportCurrentPage}
+          totalPages={reportTotalPages}
+          paginationItems={reportPaginationItems}
+          onYearChange={(value) => { setReportYear(value); setReportCurrentPage(1) }}
+          onMonthChange={(value) => { setReportMonth(value); setReportCurrentPage(1) }}
+          onSearchChange={(value) => { setReportSearch(value); setReportCurrentPage(1) }}
+          onPageSizeChange={(value) => { setReportPageSize(value); setReportCurrentPage(1) }}
+          onPageChange={setReportCurrentPage}
+          onRefresh={() => loadActivityReport({ silent: true })}
+          onExport={exportActivityReport}
+        />}
       </main>
 
       <Dialog open={modalOpen} onOpenChange={(open) => { if (!open) closeModal() }}>
@@ -983,6 +1155,160 @@ function App() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+function ReportView({
+  records,
+  visibleRecords,
+  pagedRecords,
+  chartData,
+  maxQty,
+  totalQty,
+  totalAmount,
+  departmentCount,
+  loading,
+  refreshing,
+  error,
+  message,
+  year,
+  month,
+  search,
+  pageSize,
+  pageStart,
+  pageEnd,
+  currentPage,
+  totalPages,
+  paginationItems,
+  onYearChange,
+  onMonthChange,
+  onSearchChange,
+  onPageSizeChange,
+  onPageChange,
+  onRefresh,
+  onExport,
+}: {
+  records: ActivityReportRecord[]
+  visibleRecords: ActivityReportRecord[]
+  pagedRecords: ActivityReportRecord[]
+  chartData: { department: string; qty: number }[]
+  maxQty: number
+  totalQty: number
+  totalAmount: number
+  departmentCount: number
+  loading: boolean
+  refreshing: boolean
+  error: string
+  message: string
+  year: string
+  month: string
+  search: string
+  pageSize: number
+  pageStart: number
+  pageEnd: number
+  currentPage: number
+  totalPages: number
+  paginationItems: Array<number | 'ellipsis'>
+  onYearChange: (value: string) => void
+  onMonthChange: (value: string) => void
+  onSearchChange: (value: string) => void
+  onPageSizeChange: (value: number) => void
+  onPageChange: (page: number) => void
+  onRefresh: () => void
+  onExport: () => void
+}) {
+  return (
+    <Card className="min-w-0 gap-0 lg:min-h-0 lg:overflow-hidden">
+      <CardHeader className="shrink-0 gap-4 pb-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="eyebrow">REPORTS</p>
+            <div className="mt-1 flex items-center gap-3">
+              <h2 className="text-xl font-semibold tracking-tight">Activity Report</h2>
+              <Badge variant="secondary">{visibleRecords.length} รายการ</Badge>
+              {refreshing && <Badge variant="outline"><Loader2 className="animate-spin" />Sync</Badge>}
+            </div>
+            <CardDescription className="mt-1">dbo.V_2AM02_12 / Department vs Qty</CardDescription>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading || refreshing}><RefreshCw data-icon="inline-start" />Refresh</Button>
+            <Button type="button" size="sm" onClick={onExport} disabled={loading}><Download data-icon="inline-start" />Export Excel</Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_120px_140px]">
+          <InputGroup>
+            <InputGroupInput aria-label="ค้นหารายงาน" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="ค้นหา report..." />
+            <InputGroupAddon><Search /></InputGroupAddon>
+            {search && <InputGroupAddon align="inline-end"><InputGroupButton size="icon-xs" title="ล้างคำค้นหา" aria-label="ล้างคำค้นหา" onClick={() => onSearchChange('')}><X /></InputGroupButton></InputGroupAddon>}
+          </InputGroup>
+          <Input aria-label="Year" value={year} onChange={(event) => onYearChange(event.target.value.replace(/[^\d]/g, '').slice(0, 4))} placeholder="Year" inputMode="numeric" />
+          <select aria-label="Month" value={month} onChange={(event) => onMonthChange(event.target.value)} className={inputClass}>
+            {monthOptions.map((item) => <option key={item.value || 'all'} value={item.value}>{item.label}</option>)}
+          </select>
+        </div>
+      </CardHeader>
+      <Separator />
+      {(error || message) && <div className="shrink-0 px-5 pt-4"><Alert variant={error ? 'destructive' : 'default'}>{error ? <X /> : <Check />}<AlertDescription>{error || message}</AlertDescription></Alert></div>}
+      <CardContent className="min-w-0 overflow-auto p-0 lg:min-h-0 lg:flex-1">
+        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <section className="report-chart-panel" aria-label="กราฟ Qty ตาม Department">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold">Department Qty</h3>
+                <p className="mt-1 text-xs text-muted-foreground">รวม Qty ตาม Department</p>
+              </div>
+              <Badge variant="outline">{departmentCount} Departments</Badge>
+            </div>
+            {loading ? <div className="flex min-h-64 items-center justify-center gap-3 text-muted-foreground"><Loader2 className="animate-spin" />กำลังโหลดรายงาน...</div>
+            : chartData.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><BarChart3 /></EmptyMedia><EmptyTitle>ไม่พบข้อมูลกราฟ</EmptyTitle><EmptyDescription>ลองเปลี่ยน Year หรือ Month</EmptyDescription></EmptyHeader></Empty>
+            : <div className="report-bar-list">
+                {chartData.map((item) => (
+                  <div key={item.department} className="report-bar-row">
+                    <div className="report-bar-label" title={item.department}>{item.department}</div>
+                    <div className="report-bar-track"><span style={{ width: `${Math.max(3, (item.qty / maxQty) * 100)}%` }} /></div>
+                    <div className="report-bar-value">{formatNumber(item.qty)}</div>
+                  </div>
+                ))}
+              </div>}
+          </section>
+          <aside className="grid gap-3 content-start">
+            <Stat label="Rows" value={records.length} />
+            <Stat label="Qty" value={formatNumber(totalQty)} />
+            <Stat label="Amount" value={formatNumber(totalAmount)} />
+          </aside>
+        </div>
+        <Separator />
+        <table className="asset-table w-full min-w-[1380px] text-left text-sm" aria-label="Activity report">
+          <thead className="sticky top-0 z-10">
+            <tr>
+              <th scope="col">#</th>
+              {reportColumns.map((column) => <th key={column.key} scope="col" className={column.align === 'right' ? 'text-right' : undefined}>{column.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {loading && records.length === 0 ? <tr><td colSpan={13}><div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" role="status"><Loader2 className="animate-spin text-primary" size={26} />กำลังโหลดรายงาน...</div></td></tr>
+            : pagedRecords.length === 0 ? <tr><td colSpan={13}><Empty><EmptyHeader><EmptyMedia variant="icon"><Search /></EmptyMedia><EmptyTitle>ไม่พบข้อมูล</EmptyTitle><EmptyDescription>ลองเปลี่ยนคำค้นหาหรือตัวกรอง Year/Month</EmptyDescription></EmptyHeader></Empty></td></tr>
+            : pagedRecords.map((row, index) => (
+              <tr key={`${row.Activity_Code || 'row'}-${pageStart + index}`}>
+                <td className="cell-index">{pageStart + index + 1}</td>
+                {reportColumns.map((column) => <td key={column.key} className={cn(column.align === 'right' && 'text-right tabular-nums')}>{formatReportCell(row[column.key])}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+      <CardFooter className="shrink-0 flex-col items-start justify-between gap-3 xl:flex-row xl:items-center">
+        <p className="text-xs text-muted-foreground">Showing <strong className="text-foreground">{visibleRecords.length === 0 ? 0 : pageStart + 1}-{pageEnd}</strong> of <strong className="text-foreground">{visibleRecords.length}</strong></p>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2"><label htmlFor="report-page-size" className="whitespace-nowrap text-xs text-muted-foreground">Rows per page:</label><select id="report-page-size" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} className={cn(inputClass, 'w-20')}>{pageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></div>
+          <nav aria-label="หน้าของรายงาน" className="flex items-center gap-1">
+            <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.max(1, currentPage - 1))} disabled={currentPage === 1 || visibleRecords.length === 0} aria-label="หน้าก่อนหน้า"><ChevronLeft data-icon="inline-start" /><span className="hidden sm:inline">Prev</span></Button>
+            {paginationItems.map((item, index) => item === 'ellipsis' ? <span key={`report-ellipsis-${index}`} className="flex size-9 items-center justify-center text-muted-foreground">...</span> : <Button key={item} type="button" variant={item === currentPage ? 'default' : 'ghost'} size="icon-sm" aria-current={item === currentPage ? 'page' : undefined} onClick={() => onPageChange(item)}>{item}</Button>)}
+            <Button type="button" variant="outline" size="sm" onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages || visibleRecords.length === 0} aria-label="หน้าถัดไป"><span className="hidden sm:inline">Next</span><ChevronRight data-icon="inline-end" /></Button>
+          </nav>
+        </div>
+      </CardFooter>
+    </Card>
   )
 }
 
@@ -1096,7 +1422,7 @@ function showSavedToast(title: string, name: string) {
   })
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value }: { label: string; value: number | string }) {
   return <div className="stat-tile"><p className="text-xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{label}</p></div>
 }
 
@@ -1237,6 +1563,31 @@ function clearLoginSession() {
 
 function readLeftCardHidden() {
   return window.localStorage.getItem(LEFT_CARD_HIDDEN_KEY) === '1'
+}
+
+function numberValue(value?: number | null) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0
+}
+
+function formatNumber(value?: number | null) {
+  return new Intl.NumberFormat('th-TH', { maximumFractionDigits: 2 }).format(numberValue(value))
+}
+
+function formatReportCell(value: ActivityReportRecord[keyof ActivityReportRecord]) {
+  if (value == null || value === '') return '-'
+  if (typeof value === 'number') return formatNumber(value)
+  return value
+}
+
+function buildDepartmentQtyChart(records: ActivityReportRecord[]) {
+  const totals = new Map<string, number>()
+  records.forEach((row) => {
+    const department = String(row.Department || 'ไม่ระบุ').trim() || 'ไม่ระบุ'
+    totals.set(department, (totals.get(department) || 0) + numberValue(row.Qty))
+  })
+  return Array.from(totals, ([department, qty]) => ({ department, qty }))
+    .filter((item) => item.qty > 0)
+    .sort((a, b) => b.qty - a.qty || a.department.localeCompare(b.department))
 }
 
 function safeFilename(value: string) {

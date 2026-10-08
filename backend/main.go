@@ -90,6 +90,21 @@ type record struct {
 	Active         *string  `json:"Active"`
 }
 
+type activityReportRecord struct {
+	Title              *string  `json:"title"`
+	ActivityCode       *string  `json:"Activity_Code"`
+	Provider           *string  `json:"Provider"`
+	ProviderDepartment *string  `json:"Provider_Department"`
+	ActivityName       *string  `json:"Activity_Name"`
+	Unit               *string  `json:"Unit"`
+	Rate               *float64 `json:"Rate"`
+	Year               *string  `json:"Year"`
+	Month              *string  `json:"Month"`
+	Department         *string  `json:"Department"`
+	Qty                *float64 `json:"Qty"`
+	Amount             *float64 `json:"Amount"`
+}
+
 type diskRecord struct {
 	DriveLetter *string
 	Model       *string
@@ -180,14 +195,20 @@ func main() {
 	mux.HandleFunc("/login", a.withCORS(a.login))
 	mux.HandleFunc("/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/export", a.withCORS(a.exportExcel))
+	mux.HandleFunc("/reports/activity", a.withCORS(a.activityReport))
+	mux.HandleFunc("/reports/activity/export", a.withCORS(a.exportActivityReportExcel))
 	mux.HandleFunc("/api/login", a.withCORS(a.login))
 	mux.HandleFunc("/api/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/export", a.withCORS(a.exportExcel))
+	mux.HandleFunc("/api/reports/activity", a.withCORS(a.activityReport))
+	mux.HandleFunc("/api/reports/activity/export", a.withCORS(a.exportActivityReportExcel))
 	mux.HandleFunc("/uploads/", a.withCORS(http.StripPrefix("/uploads/", uploadFiles).ServeHTTP))
 	mux.HandleFunc("/api/SSO_Check/health", a.withCORS(a.health))
 	mux.HandleFunc("/api/SSO_Check/login", a.withCORS(a.login))
 	mux.HandleFunc("/api/SSO_Check/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/SSO_Check/export", a.withCORS(a.exportExcel))
+	mux.HandleFunc("/api/SSO_Check/reports/activity", a.withCORS(a.activityReport))
+	mux.HandleFunc("/api/SSO_Check/reports/activity/export", a.withCORS(a.exportActivityReportExcel))
 	mux.HandleFunc("/api/SSO_Check/uploads/", a.withCORS(http.StripPrefix("/api/SSO_Check/uploads/", uploadFiles).ServeHTTP))
 	a.mountFrontend(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -393,6 +414,198 @@ func (a *app) exportExcel(w http.ResponseWriter, r *http.Request) {
 	if err := file.Write(w); err != nil {
 		log.Printf("write excel: %v", err)
 	}
+}
+
+func (a *app) activityReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	records, err := a.activityReportRecords(r.Context(), r.URL.Query().Get("year"), r.URL.Query().Get("month"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, records)
+}
+
+func (a *app) exportActivityReportExcel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	year := r.URL.Query().Get("year")
+	month := r.URL.Query().Get("month")
+	records, err := a.activityReportRecords(r.Context(), year, month)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	file, err := buildActivityReportExcel(records)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	filename := "SSO_Check_Report.xlsx"
+	if strings.TrimSpace(year) != "" && strings.TrimSpace(month) != "" {
+		filename = "SSO_Check_Report_" + safeFilename(year) + "_" + safeFilename(month) + ".xlsx"
+	} else if strings.TrimSpace(year) != "" {
+		filename = "SSO_Check_Report_" + safeFilename(year) + ".xlsx"
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.WriteHeader(http.StatusOK)
+	if err := file.Write(w); err != nil {
+		log.Printf("write activity report excel: %v", err)
+	}
+}
+
+func (a *app) activityReportRecords(ctx context.Context, year, month string) ([]activityReportRecord, error) {
+	query := `SELECT
+CAST('' AS nvarchar(255)) AS title,
+CAST([Activity Code] AS nvarchar(255)) AS Activity_Code,
+CAST([Provider] AS nvarchar(255)) AS Provider,
+CAST([Provider_Department] AS nvarchar(255)) AS Provider_Department,
+CAST([Activity_Name] AS nvarchar(255)) AS Activity_Name,
+CAST([Unit] AS nvarchar(255)) AS Unit,
+TRY_CONVERT(float, [Rate]) AS Rate,
+CAST([Year] AS nvarchar(50)) AS [Year],
+CAST([Month] AS nvarchar(50)) AS [Month],
+CAST([Department] AS nvarchar(255)) AS Department,
+TRY_CONVERT(float, [Qty]) AS Qty,
+TRY_CONVERT(float, [Amount]) AS Amount
+FROM dbo.V_2AM02_12`
+	args := []any{}
+	conditions := []string{}
+	if strings.TrimSpace(year) != "" {
+		args = append(args, strings.TrimSpace(year))
+		conditions = append(conditions, fmt.Sprintf("LTRIM(RTRIM(CAST([Year] AS nvarchar(50)))) = @p%d", len(args)))
+	}
+	if strings.TrimSpace(month) != "" {
+		args = append(args, strings.TrimSpace(month))
+		conditions = append(conditions, fmt.Sprintf("LTRIM(RTRIM(CAST([Month] AS nvarchar(50)))) = @p%d", len(args)))
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY [Year] DESC, TRY_CONVERT(int, [Month]) DESC, [Department], [Activity_Name]"
+
+	rows, err := a.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := []activityReportRecord{}
+	for rows.Next() {
+		var rec activityReportRecord
+		var title, activityCode, provider, providerDepartment, activityName, unit, yearValue, monthValue, department sql.NullString
+		var rate, qty, amount sql.NullFloat64
+		if err := rows.Scan(&title, &activityCode, &provider, &providerDepartment, &activityName, &unit, &rate, &yearValue, &monthValue, &department, &qty, &amount); err != nil {
+			return nil, err
+		}
+		rec.Title = nullStringPtr(title)
+		rec.ActivityCode = nullStringPtr(activityCode)
+		rec.Provider = nullStringPtr(provider)
+		rec.ProviderDepartment = nullStringPtr(providerDepartment)
+		rec.ActivityName = nullStringPtr(activityName)
+		rec.Unit = nullStringPtr(unit)
+		rec.Rate = nullFloatPtr(rate)
+		rec.Year = nullStringPtr(yearValue)
+		rec.Month = nullStringPtr(monthValue)
+		rec.Department = nullStringPtr(department)
+		rec.Qty = nullFloatPtr(qty)
+		rec.Amount = nullFloatPtr(amount)
+		records = append(records, rec)
+	}
+	return records, rows.Err()
+}
+
+func buildActivityReportExcel(records []activityReportRecord) (*excelize.File, error) {
+	const sheet = "Activity_Report"
+	file := excelize.NewFile()
+	defaultSheet := file.GetSheetName(file.GetActiveSheetIndex())
+	if defaultSheet != sheet {
+		if err := file.SetSheetName(defaultSheet, sheet); err != nil {
+			return nil, err
+		}
+	}
+
+	headerStyle, bodyStyle, err := excelStyles(file)
+	if err != nil {
+		return nil, err
+	}
+
+	headers := []string{"No.", "title", "Activity Code", "Provider", "Provider_Department", "Activity_Name", "Unit", "Rate", "Year", "Month", "Department", "Qty", "Amount"}
+	for index, header := range headers {
+		cell, err := excelize.CoordinatesToCellName(index+1, 1)
+		if err != nil {
+			return nil, err
+		}
+		if err := file.SetCellValue(sheet, cell, header); err != nil {
+			return nil, err
+		}
+	}
+	if err := file.SetCellStyle(sheet, "A1", "M1", headerStyle); err != nil {
+		return nil, err
+	}
+
+	for index, rec := range records {
+		row := index + 2
+		values := []any{
+			index + 1,
+			stringValue(rec.Title),
+			stringValue(rec.ActivityCode),
+			stringValue(rec.Provider),
+			stringValue(rec.ProviderDepartment),
+			stringValue(rec.ActivityName),
+			stringValue(rec.Unit),
+			floatValue(rec.Rate),
+			stringValue(rec.Year),
+			stringValue(rec.Month),
+			stringValue(rec.Department),
+			floatValue(rec.Qty),
+			floatValue(rec.Amount),
+		}
+		for colIndex, value := range values {
+			cell, err := excelize.CoordinatesToCellName(colIndex+1, row)
+			if err != nil {
+				return nil, err
+			}
+			if err := file.SetCellValue(sheet, cell, value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(records) > 0 {
+		if err := file.SetCellStyle(sheet, "A2", fmt.Sprintf("M%d", len(records)+1), bodyStyle); err != nil {
+			return nil, err
+		}
+	}
+	widths := map[string]float64{
+		"A": 8, "B": 20, "C": 18, "D": 22, "E": 24, "F": 36, "G": 12, "H": 12, "I": 10, "J": 10, "K": 22, "L": 12, "M": 14,
+	}
+	for col, width := range widths {
+		if err := file.SetColWidth(sheet, col, col, width); err != nil {
+			return nil, err
+		}
+	}
+	if err := file.SetPanes(sheet, &excelize.Panes{
+		Freeze:      true,
+		Split:       false,
+		XSplit:      0,
+		YSplit:      1,
+		TopLeftCell: "A2",
+		ActivePane:  "bottomLeft",
+	}); err != nil {
+		return nil, err
+	}
+	return file, nil
 }
 
 func (a *app) exportRecords(ctx context.Context, userChecks []string) ([]record, error) {

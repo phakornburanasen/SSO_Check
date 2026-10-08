@@ -154,6 +154,13 @@
   }
   .stat-tile { @apply rounded-xl border border-border bg-muted px-1 py-3; }
   .stat-tile:first-child { @apply border-primary/15 bg-secondary text-primary; }
+  .report-chart-panel { @apply rounded-xl border border-border bg-card p-4; }
+  .report-bar-list { @apply flex max-h-80 flex-col gap-3 overflow-y-auto pr-1; }
+  .report-bar-row { @apply grid min-w-0 grid-cols-[132px_minmax(0,1fr)_72px] items-center gap-3 text-xs; }
+  .report-bar-label { @apply truncate font-medium text-foreground; }
+  .report-bar-track { @apply h-3 overflow-hidden rounded-full bg-muted; }
+  .report-bar-track span { @apply block h-full rounded-full bg-primary transition-all; }
+  .report-bar-value { @apply text-right font-semibold tabular-nums text-muted-foreground; }
   .upload-option {
     @apply relative flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-input bg-muted px-4 py-6 text-center text-sm text-muted-foreground;
     @apply transition-colors hover:border-primary hover:bg-secondary has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/30;
