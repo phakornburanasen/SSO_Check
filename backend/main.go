@@ -541,7 +541,7 @@ func buildActivityReportExcel(records []activityReportRecord) (*excelize.File, e
 		return nil, err
 	}
 
-	headers := []string{"No.", "title", "Activity Code", "Provider", "Provider_Department", "Activity_Name", "Unit", "Rate", "Year", "Month", "Department", "Qty", "Amount"}
+	headers := []string{"No.", "Activity Code", "Provider", "Provider_Department", "Activity_Name", "Unit", "Rate", "Year", "Month", "Department", "Qty", "Amount"}
 	for index, header := range headers {
 		cell, err := excelize.CoordinatesToCellName(index+1, 1)
 		if err != nil {
@@ -551,7 +551,7 @@ func buildActivityReportExcel(records []activityReportRecord) (*excelize.File, e
 			return nil, err
 		}
 	}
-	if err := file.SetCellStyle(sheet, "A1", "M1", headerStyle); err != nil {
+	if err := file.SetCellStyle(sheet, "A1", "L1", headerStyle); err != nil {
 		return nil, err
 	}
 
@@ -559,7 +559,6 @@ func buildActivityReportExcel(records []activityReportRecord) (*excelize.File, e
 		row := index + 2
 		values := []any{
 			index + 1,
-			stringValue(rec.Title),
 			stringValue(rec.ActivityCode),
 			stringValue(rec.Provider),
 			stringValue(rec.ProviderDepartment),
@@ -583,12 +582,24 @@ func buildActivityReportExcel(records []activityReportRecord) (*excelize.File, e
 		}
 	}
 	if len(records) > 0 {
-		if err := file.SetCellStyle(sheet, "A2", fmt.Sprintf("M%d", len(records)+1), bodyStyle); err != nil {
+		if err := file.SetCellStyle(sheet, "A2", fmt.Sprintf("L%d", len(records)+1), bodyStyle); err != nil {
+			return nil, err
+		}
+		amountFormat := "#,##0"
+		amountStyle, err := file.NewStyle(&excelize.Style{
+			Font:         &excelize.Font{Family: "Century", Size: 12},
+			Alignment:    &excelize.Alignment{Vertical: "center"},
+			CustomNumFmt: &amountFormat,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := file.SetCellStyle(sheet, "L2", fmt.Sprintf("L%d", len(records)+1), amountStyle); err != nil {
 			return nil, err
 		}
 	}
 	widths := map[string]float64{
-		"A": 8, "B": 20, "C": 18, "D": 22, "E": 24, "F": 36, "G": 12, "H": 12, "I": 10, "J": 10, "K": 22, "L": 12, "M": 14,
+		"A": 8, "B": 18, "C": 22, "D": 24, "E": 36, "F": 12, "G": 12, "H": 10, "I": 10, "J": 22, "K": 12, "L": 14,
 	}
 	for col, width := range widths {
 		if err := file.SetColWidth(sheet, col, col, width); err != nil {

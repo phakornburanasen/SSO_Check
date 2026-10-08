@@ -13,9 +13,9 @@ if not exist "%EXE%" (
 
 if not exist "%RUNTIME%" mkdir "%RUNTIME%"
 set "PORT=10100"
-set "APP_ROOT=%ROOT%"
-set "FRONTEND_DIR=%ROOT%\frontend\dist"
-set "UPLOAD_DIR=%ROOT%\uploads\imgs"
+set "APP_ROOT=%ROOT%\dist\windows"
+set "FRONTEND_DIR=%ROOT%\dist\windows\frontend\dist"
+set "UPLOAD_DIR=%ROOT%\dist\windows\uploads\imgs"
 set "CORS_ORIGIN=*"
 
 echo Starting production exe...

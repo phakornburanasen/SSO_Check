@@ -149,15 +149,15 @@ const cropAspectPresets: { label: string; value: number | null }[] = [
   { label: '16:9', value: 16 / 9 },
 ]
 
-const DEFAULT_API_BASE = `http://${window.location.hostname}:8000/api/SSO_Check`
-const DEFAULT_MUTATION_API_BASE = `http://${window.location.hostname}:10100/api/SSO_Check`
+const DEFAULT_API_BASE = `http://${window.location.hostname}:10100/api/SSO_Check`
 const API_BASE = (import.meta.env.VITE_API_BASE || DEFAULT_API_BASE).replace(/\/$/, '')
-const MUTATION_API_BASE = (import.meta.env.VITE_MUTATION_API_BASE || DEFAULT_MUTATION_API_BASE).replace(/\/$/, '')
+const MUTATION_API_BASE = (import.meta.env.VITE_MUTATION_API_BASE || API_BASE).replace(/\/$/, '')
 const apiURL = (path: string) => `${API_BASE}${path}`
 const mutationApiURL = (path: string) => `${MUTATION_API_BASE}${path}`
 const SAP_SEARCH_URL = 'http://10.0.32.71/SearchAsset/'
 const SESSION_KEY = 'sso_check_login_session'
 const LEFT_CARD_HIDDEN_KEY = 'sso_check_left_card_hidden'
+const ACTIVE_VIEW_KEY = 'sso_check_active_view'
 
 const typeOptions = [
   { value: '', label: 'ทั้งหมด', icon: LayoutGrid },
@@ -206,7 +206,6 @@ const monthOptions = [
 ]
 
 const reportColumns: { key: keyof ActivityReportRecord; label: string; align?: 'right' }[] = [
-  { key: 'title', label: 'title' },
   { key: 'Activity_Code', label: 'Activity Code' },
   { key: 'Provider', label: 'Provider' },
   { key: 'Provider_Department', label: 'Provider_Department' },
@@ -252,7 +251,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1)
   const [session, setSession] = useState<LoginSession | null>(() => loadLoginSession())
   const [leftCardHidden, setLeftCardHidden] = useState(() => readLeftCardHidden())
-  const [activeView, setActiveView] = useState<WorkspaceView>('assets')
+  const [activeView, setActiveView] = useState<WorkspaceView>(() => readActiveView())
   const [reportRecords, setReportRecords] = useState<ActivityReportRecord[]>([])
   const [reportLoading, setReportLoading] = useState(false)
   const [reportRefreshing, setReportRefreshing] = useState(false)
@@ -279,6 +278,14 @@ function App() {
     if (!userCheck) return
     loadExportUserChecks()
   }, [userCheck])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ACTIVE_VIEW_KEY, activeView)
+    } catch {
+      // ignore storage errors
+    }
+  }, [activeView])
 
   useEffect(() => {
     if (!userCheck || activeView !== 'reports') return
@@ -883,10 +890,6 @@ function App() {
             </Button>
           </nav>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {activeView === 'assets' && <Button type="button" variant="nav" size="sm" onClick={toggleLeftCard} aria-pressed={leftCardHidden} title={leftCardHidden ? 'แสดง Check Asset' : 'ซ่อน Check Asset'}>
-              {leftCardHidden ? <PanelLeftOpen data-icon="inline-start" /> : <PanelLeftClose data-icon="inline-start" />}
-              <span className="hidden sm:inline">{leftCardHidden ? 'Show' : 'Hide'}</span>
-            </Button>}
             <div className="header-status flex items-center gap-2 text-xs" role="status">
               <Circle size={7} className="fill-current" />
               <span>{activeView === 'reports' ? (reportLoading ? 'Loading reports' : 'Ready') : (loading ? 'Loading assets' : 'Ready')}</span>
@@ -903,7 +906,7 @@ function App() {
         </div>
       </header>
 
-      <main className={cn('workspace-layout', (activeView === 'reports' || leftCardHidden) && 'is-left-card-hidden')}>
+      <main className={cn('workspace-layout', activeView === 'reports' ? 'is-single-view' : leftCardHidden && 'is-left-card-hidden')}>
         {activeView === 'assets' && <aside aria-label="จัดการอุปกรณ์และการส่งออก" aria-hidden={leftCardHidden} className="check-asset-panel">
           <Card>
             <CardHeader>
@@ -976,7 +979,11 @@ function App() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="eyebrow">ASSET WORKSPACE</p>
-                <div className="mt-1 flex items-center gap-3"><h2 className="text-xl font-semibold tracking-tight">Asset List</h2><Badge variant="secondary">{visibleRecords.length} รายการ</Badge>
+                <div className="mt-1 flex items-center gap-3">
+                  <Button type="button" variant="outline" size="icon-sm" onClick={toggleLeftCard} aria-pressed={leftCardHidden} title={leftCardHidden ? 'แสดง Check Asset' : 'ซ่อน Check Asset'} aria-label={leftCardHidden ? 'แสดง Check Asset' : 'ซ่อน Check Asset'}>
+                    {leftCardHidden ? <PanelLeftOpen /> : <PanelLeftClose />}
+                  </Button>
+                  <h2 className="text-xl font-semibold tracking-tight">Asset List</h2><Badge variant="secondary">{visibleRecords.length} รายการ</Badge>
                   {refreshing && <Badge variant="outline"><Loader2 className="animate-spin" />Sync</Badge>}
                 </div>
                 <CardDescription className="mt-1">{filter ? typeLabels[filter] : 'อุปกรณ์ทั้งหมด'}{assetListUserCheck ? ` / User Check ${assetListUserCheck}` : ''}</CardDescription>
@@ -1237,7 +1244,7 @@ function ReportView({
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_120px_140px]">
           <InputGroup>
-            <InputGroupInput aria-label="ค้นหารายงาน" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="ค้นหา report..." />
+            <InputGroupInput aria-label="ค้นหารายงาน" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="ค้นหา..." />
             <InputGroupAddon><Search /></InputGroupAddon>
             {search && <InputGroupAddon align="inline-end"><InputGroupButton size="icon-xs" title="ล้างคำค้นหา" aria-label="ล้างคำค้นหา" onClick={() => onSearchChange('')}><X /></InputGroupButton></InputGroupAddon>}
           </InputGroup>
@@ -1286,8 +1293,8 @@ function ReportView({
             </tr>
           </thead>
           <tbody>
-            {loading && records.length === 0 ? <tr><td colSpan={13}><div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" role="status"><Loader2 className="animate-spin text-primary" size={26} />กำลังโหลดรายงาน...</div></td></tr>
-            : pagedRecords.length === 0 ? <tr><td colSpan={13}><Empty><EmptyHeader><EmptyMedia variant="icon"><Search /></EmptyMedia><EmptyTitle>ไม่พบข้อมูล</EmptyTitle><EmptyDescription>ลองเปลี่ยนคำค้นหาหรือตัวกรอง Year/Month</EmptyDescription></EmptyHeader></Empty></td></tr>
+            {loading && records.length === 0 ? <tr><td colSpan={12}><div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" role="status"><Loader2 className="animate-spin text-primary" size={26} />กำลังโหลดรายงาน...</div></td></tr>
+            : pagedRecords.length === 0 ? <tr><td colSpan={12}><Empty><EmptyHeader><EmptyMedia variant="icon"><Search /></EmptyMedia><EmptyTitle>ไม่พบข้อมูล</EmptyTitle><EmptyDescription>ลองเปลี่ยนคำค้นหาหรือตัวกรอง Year/Month</EmptyDescription></EmptyHeader></Empty></td></tr>
             : pagedRecords.map((row, index) => (
               <tr key={`${row.Activity_Code || 'row'}-${pageStart + index}`}>
                 <td className="cell-index">{pageStart + index + 1}</td>
@@ -1559,6 +1566,14 @@ function saveLoginSession(session: LoginSession) {
 
 function clearLoginSession() {
   window.localStorage.removeItem(SESSION_KEY)
+}
+
+function readActiveView(): WorkspaceView {
+  try {
+    return window.localStorage.getItem(ACTIVE_VIEW_KEY) === 'reports' ? 'reports' : 'assets'
+  } catch {
+    return 'assets'
+  }
 }
 
 function readLeftCardHidden() {

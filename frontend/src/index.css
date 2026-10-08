@@ -138,10 +138,12 @@
     .workspace-layout { grid-template-columns: 300px minmax(0, 1fr); }
     .workspace-layout.is-left-card-hidden { grid-template-columns: 0 minmax(0, 1fr); gap: 0; }
     .check-asset-panel { max-height: none; }
+    .workspace-layout.is-single-view { grid-template-columns: minmax(0, 1fr); }
   }
   @media (min-width: 1280px) {
     .workspace-layout { grid-template-columns: 320px minmax(0, 1fr); }
     .workspace-layout.is-left-card-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+    .workspace-layout.is-single-view { grid-template-columns: minmax(0, 1fr); }
   }
   .eyebrow { color: var(--primary); font-size: 10px; font-weight: 650; letter-spacing: 0.12em; line-height: 1.6; }
   .native-select {
