@@ -1258,7 +1258,7 @@ function ReportView({
       </CardHeader>
       <Separator />
       {(error || message) && <div className="shrink-0 px-5 pt-4"><Alert variant={error ? 'destructive' : 'default'}>{error ? <X /> : <Check />}<AlertDescription>{error || message}</AlertDescription></Alert></div>}
-      <CardContent className="min-w-0 overflow-auto p-0 lg:min-h-0 lg:flex-1">
+      <CardContent className="report-scroll-area min-w-0 overflow-y-scroll p-0 lg:min-h-0 lg:flex-1">
         <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <section className="report-chart-panel" aria-label="กราฟ Qty ตาม Department">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1287,27 +1287,29 @@ function ReportView({
           </aside>
         </div>
         <Separator />
-        <table className="asset-table w-full min-w-[1380px] text-left text-sm" aria-label="Activity report">
-          <thead className="sticky top-0 z-10">
-            <tr>
-              <th scope="col">#</th>
-              {reportColumns.map((column) => <th key={column.key} scope="col" className={column.align === 'right' ? 'text-right' : undefined}>{column.label}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {loading && records.length === 0 ? <tr><td colSpan={12}><div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" role="status"><Loader2 className="animate-spin text-primary" size={26} />กำลังโหลดรายงาน...</div></td></tr>
-            : pagedRecords.length === 0 ? <tr><td colSpan={12}><Empty><EmptyHeader><EmptyMedia variant="icon"><Search /></EmptyMedia><EmptyTitle>ไม่พบข้อมูล</EmptyTitle><EmptyDescription>ลองเปลี่ยนคำค้นหาหรือตัวกรอง Year/Month</EmptyDescription></EmptyHeader></Empty></td></tr>
-            : pagedRecords.map((row, index) => (
-              <tr key={`${row.Activity_Code || 'row'}-${pageStart + index}`}>
-                <td className="cell-index">{pageStart + index + 1}</td>
-                {reportColumns.map((column) => <td key={column.key} className={cn(column.align === 'right' && 'text-right tabular-nums')}>{formatReportCell(row[column.key])}</td>)}
+        <div className="min-w-0 overflow-x-auto">
+          <table className="asset-table w-full min-w-[1380px] text-left text-sm" aria-label="Activity report">
+            <thead className="sticky top-0 z-10">
+              <tr>
+                <th scope="col">#</th>
+                {reportColumns.map((column) => <th key={column.key} scope="col" className={column.align === 'right' ? 'text-right' : undefined}>{column.label}</th>)}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {loading && records.length === 0 ? <tr><td colSpan={12}><div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" role="status"><Loader2 className="animate-spin text-primary" size={26} />กำลังโหลดรายงาน...</div></td></tr>
+              : pagedRecords.length === 0 ? <tr><td colSpan={12}><Empty><EmptyHeader><EmptyMedia variant="icon"><Search /></EmptyMedia><EmptyTitle>ไม่พบข้อมูล</EmptyTitle><EmptyDescription>ลองเปลี่ยนคำค้นหาหรือตัวกรอง Year/Month</EmptyDescription></EmptyHeader></Empty></td></tr>
+              : pagedRecords.map((row, index) => (
+                <tr key={`${row.Activity_Code || 'row'}-${pageStart + index}`}>
+                  <td className="cell-index">{pageStart + index + 1}</td>
+                  {reportColumns.map((column) => <td key={column.key} className={cn(column.align === 'right' && 'text-right tabular-nums')}>{formatReportCell(row[column.key])}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </CardContent>
       <CardFooter className="shrink-0 flex-col items-start justify-between gap-3 xl:flex-row xl:items-center">
-        <p className="text-xs text-muted-foreground">Showing <strong className="text-foreground">{visibleRecords.length === 0 ? 0 : pageStart + 1}-{pageEnd}</strong> of <strong className="text-foreground">{visibleRecords.length}</strong></p>
+        <p className="text-xs text-muted-foreground">Showing <strong className="text-foreground">{visibleRecords.length === 0 ? 0 : pageStart + 1}–{pageEnd}</strong> of <strong className="text-foreground">{visibleRecords.length}</strong></p>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2"><label htmlFor="report-page-size" className="whitespace-nowrap text-xs text-muted-foreground">Rows per page:</label><select id="report-page-size" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} className={cn(inputClass, 'w-20')}>{pageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></div>
           <nav aria-label="หน้าของรายงาน" className="flex items-center gap-1">

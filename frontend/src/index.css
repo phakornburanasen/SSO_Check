@@ -181,7 +181,8 @@
       @apply h-full overflow-y-auto pr-1;
     }
     .workspace-layout.is-single-view {
-      display: block;
+      display: flex;
+      min-height: 0;
     }
   }
   @media (min-width: 1280px) {
@@ -202,6 +203,23 @@
   .stat-tile { @apply rounded-xl border border-border bg-muted px-1 py-3; }
   .stat-tile:first-child { @apply border-primary/15 bg-secondary text-primary; }
   .report-chart-panel { @apply rounded-xl border border-border bg-card p-4; }
+  .report-scroll-area {
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--primary), transparent 45%) transparent;
+  }
+  .report-scroll-area::-webkit-scrollbar { width: 10px; }
+  .report-scroll-area::-webkit-scrollbar-track { background: transparent; }
+  .report-scroll-area::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary), transparent 45%);
+    background-clip: padding-box;
+  }
+  .report-scroll-area::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--primary), transparent 30%);
+    background-clip: padding-box;
+  }
   .report-bar-list { @apply flex max-h-80 flex-col gap-3 overflow-y-auto pr-1; }
   .report-bar-row { @apply grid min-w-0 grid-cols-[132px_minmax(0,1fr)_72px] items-center gap-3 text-xs; }
   .report-bar-label { @apply truncate font-medium text-foreground; }
