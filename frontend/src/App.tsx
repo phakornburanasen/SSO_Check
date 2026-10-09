@@ -1,4 +1,4 @@
-﻿import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import {
   Camera,
   BarChart3,
@@ -908,7 +908,8 @@ function App() {
 
       <main className={cn('workspace-layout', activeView === 'reports' ? 'is-single-view' : leftCardHidden && 'is-left-card-hidden')}>
         {activeView === 'assets' && <aside aria-label="จัดการอุปกรณ์และการส่งออก" aria-hidden={leftCardHidden} className="check-asset-panel">
-          <Card>
+          <div className="check-asset-panel__inner">
+            <Card>
             <CardHeader>
               <p className="eyebrow">AGENT TNLX</p>
               <h2 className="mt-1 text-2xl font-semibold tracking-tight">Check Asset</h2>
@@ -971,7 +972,8 @@ function App() {
               <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary"><Server size={18} /></div>
               <div className="min-w-0"><p className="eyebrow">SESSION</p><p className="mt-1 truncate text-sm font-medium">{userCheck || '-'} <span className="ml-1 text-xs font-normal text-muted-foreground">User check</span></p></div>
             </CardFooter>
-          </Card>
+            </Card>
+          </div>
         </aside>}
 
         {activeView === 'assets' ? <Card className="min-w-0 gap-0 lg:min-h-0 lg:overflow-hidden">
