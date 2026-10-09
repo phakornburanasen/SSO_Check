@@ -267,7 +267,11 @@
   .login-brand-copy p:not(.login-eyebrow) { @apply text-sm leading-7 text-white; }
   .login-footer { @apply flex flex-wrap justify-between gap-4 border-t border-white/10 pt-7 text-[11px] text-sky-100; }
   .login-form-panel { @apply flex min-h-[56dvh] items-center justify-center px-5 py-10 sm:px-8 lg:min-h-dvh; }
-  .login-card { @apply w-full max-w-md rounded-2xl border border-[#d5e0ec] bg-white px-8 py-10 shadow-[0_24px_70px_rgb(15_23_42_/_10%)]; }
+  .login-card {
+    @apply w-full max-w-md rounded-2xl border border-[#d5e0ec] bg-white px-8 py-10 shadow-[0_24px_70px_rgb(15_23_42_/_10%)];
+    animation: login-card-rise 720ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
+    will-change: opacity, transform;
+  }
   .login-card-kicker { @apply text-xs font-bold tracking-widest text-primary; }
   .login-card h2 { @apply mt-3 text-2xl font-bold tracking-tight text-[#09142a]; }
   .login-card-description { @apply mt-2 text-sm text-muted-foreground; }
@@ -280,6 +284,17 @@
   }
   .login-error { @apply mt-5 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive; }
   .login-submit { @apply mt-6 w-full bg-primary shadow-[0_14px_24px_rgb(15_123_120_/_20%)] hover:bg-primary/90; }
+}
+
+@keyframes login-card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* SweetAlert keeps the existing confirmation flow and shares the UI theme. */
