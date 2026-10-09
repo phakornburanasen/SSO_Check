@@ -246,7 +246,7 @@
 .sso-delete-alert-cancel:hover { background: var(--muted); }
 .sso-delete-alert-confirm:focus-visible, .sso-delete-alert-cancel:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 
-/* Save confirmation toast (5s, pauses on hover). */
+/* Save confirmation toast (2s, pauses on hover). */
 .sso-save-toast {
   width: min(380px, calc(100vw - 32px));
   border: 1px solid color-mix(in srgb, var(--success), transparent 75%);

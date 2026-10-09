@@ -468,18 +468,18 @@ func (a *app) exportActivityReportExcel(w http.ResponseWriter, r *http.Request) 
 func (a *app) activityReportRecords(ctx context.Context, year, month string) ([]activityReportRecord, error) {
 	query := `SELECT
 CAST('' AS nvarchar(255)) AS title,
-CAST([Activity Code] AS nvarchar(255)) AS Activity_Code,
+CAST([Activity] AS nvarchar(255)) AS Activity_Code,
 CAST([Provider] AS nvarchar(255)) AS Provider,
-CAST([Provider_Department] AS nvarchar(255)) AS Provider_Department,
-CAST([Activity_Name] AS nvarchar(255)) AS Activity_Name,
+CAST([ProviderDepartment] AS nvarchar(255)) AS Provider_Department,
+CAST([ActivityName] AS nvarchar(255)) AS Activity_Name,
 CAST([Unit] AS nvarchar(255)) AS Unit,
 TRY_CONVERT(float, [Rate]) AS Rate,
 CAST([Year] AS nvarchar(50)) AS [Year],
 CAST([Month] AS nvarchar(50)) AS [Month],
-CAST([Department] AS nvarchar(255)) AS Department,
-TRY_CONVERT(float, [Qty]) AS Qty,
+CAST([Receiver] AS nvarchar(255)) AS Department,
+TRY_CONVERT(float, [Quantity]) AS Qty,
 TRY_CONVERT(float, [Amount]) AS Amount
-FROM dbo.V_2AM02_12`
+FROM dbo.V_2AM04_12`
 	args := []any{}
 	conditions := []string{}
 	if strings.TrimSpace(year) != "" {
@@ -493,7 +493,7 @@ FROM dbo.V_2AM02_12`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY [Year] DESC, TRY_CONVERT(int, [Month]) DESC, [Department], [Activity_Name]"
+	query += " ORDER BY [Year] DESC, TRY_CONVERT(int, [Month]) DESC, [Receiver], [ActivityName]"
 
 	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {

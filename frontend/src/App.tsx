@@ -198,7 +198,7 @@ const officeOptions = [
 ]
 
 const inputClass = 'native-select'
-const SAVE_NOTICE_MS = 5000
+const SAVE_NOTICE_MS = 2000
 const pageSizeOptions = [10, 25, 50, 100]
 const monthOptions = [
   { value: '', label: 'ทุกเดือน' },
@@ -1235,7 +1235,7 @@ function ReportView({
               <Badge variant="secondary">{visibleRecords.length} รายการ</Badge>
               {refreshing && <Badge variant="outline"><Loader2 className="animate-spin" />Sync</Badge>}
             </div>
-            <CardDescription className="mt-1">dbo.V_2AM02_12 / Department vs Qty</CardDescription>
+            <CardDescription className="mt-1">dbo.V_2AM04_12 / Department vs Qty</CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading || refreshing}><RefreshCw data-icon="inline-start" />Refresh</Button>
