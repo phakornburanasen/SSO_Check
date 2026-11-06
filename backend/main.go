@@ -196,11 +196,13 @@ func main() {
 	mux.HandleFunc("/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/export", a.withCORS(a.exportExcel))
 	mux.HandleFunc("/reports/activity", a.withCORS(a.activityReport))
+	mux.HandleFunc("/reports/activity/views", a.withCORS(a.activityReportViews))
 	mux.HandleFunc("/reports/activity/export", a.withCORS(a.exportActivityReportExcel))
 	mux.HandleFunc("/api/login", a.withCORS(a.login))
 	mux.HandleFunc("/api/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/export", a.withCORS(a.exportExcel))
 	mux.HandleFunc("/api/reports/activity", a.withCORS(a.activityReport))
+	mux.HandleFunc("/api/reports/activity/views", a.withCORS(a.activityReportViews))
 	mux.HandleFunc("/api/reports/activity/export", a.withCORS(a.exportActivityReportExcel))
 	mux.HandleFunc("/uploads/", a.withCORS(http.StripPrefix("/uploads/", uploadFiles).ServeHTTP))
 	mux.HandleFunc("/api/SSO_Check/health", a.withCORS(a.health))
@@ -208,6 +210,7 @@ func main() {
 	mux.HandleFunc("/api/SSO_Check/agents", a.withCORS(a.agents))
 	mux.HandleFunc("/api/SSO_Check/export", a.withCORS(a.exportExcel))
 	mux.HandleFunc("/api/SSO_Check/reports/activity", a.withCORS(a.activityReport))
+	mux.HandleFunc("/api/SSO_Check/reports/activity/views", a.withCORS(a.activityReportViews))
 	mux.HandleFunc("/api/SSO_Check/reports/activity/export", a.withCORS(a.exportActivityReportExcel))
 	mux.HandleFunc("/api/SSO_Check/uploads/", a.withCORS(http.StripPrefix("/api/SSO_Check/uploads/", uploadFiles).ServeHTTP))
 	a.mountFrontend(mux)
@@ -422,12 +425,61 @@ func (a *app) activityReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	records, err := a.activityReportRecords(r.Context(), r.URL.Query().Get("year"), r.URL.Query().Get("month"))
+	records, err := a.activityReportRecords(r.Context(), r.URL.Query().Get("view"), r.URL.Query().Get("year"), r.URL.Query().Get("month"))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, records)
+}
+
+func (a *app) activityReportViews(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
+		return
+	}
+
+	views, err := a.activityReportViewSuffixes(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, views)
+}
+
+func (a *app) activityReportViewSuffixes(ctx context.Context) ([]string, error) {
+	rows, err := a.db.QueryContext(ctx, `
+SELECT v.name
+FROM sys.views AS v
+INNER JOIN sys.schemas AS s ON s.schema_id = v.schema_id
+WHERE s.name = @p1 AND v.name LIKE @p2
+ORDER BY v.name`, "dbo", "V[_]2AM04[_]%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	views := make([]string, 0)
+	for rows.Next() {
+		var viewName string
+		if err := rows.Scan(&viewName); err != nil {
+			return nil, err
+		}
+		prefix := "V_2AM04_"
+		if !strings.HasPrefix(strings.ToUpper(viewName), prefix) {
+			continue
+		}
+		number, err := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(viewName), prefix))
+		if err != nil || number < 1 || number > 12 {
+			continue
+		}
+		views = append(views, fmt.Sprintf("%02d", number))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(views)
+	return views, nil
 }
 
 func (a *app) exportActivityReportExcel(w http.ResponseWriter, r *http.Request) {
@@ -438,7 +490,7 @@ func (a *app) exportActivityReportExcel(w http.ResponseWriter, r *http.Request) 
 
 	year := r.URL.Query().Get("year")
 	month := r.URL.Query().Get("month")
-	records, err := a.activityReportRecords(r.Context(), year, month)
+	records, err := a.activityReportRecords(r.Context(), r.URL.Query().Get("view"), year, month)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -465,12 +517,61 @@ func (a *app) exportActivityReportExcel(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (a *app) activityReportRecords(ctx context.Context, year, month string) ([]activityReportRecord, error) {
-	query := `SELECT
+func (a *app) activityReportRecords(ctx context.Context, view, year, month string) ([]activityReportRecord, error) {
+	availableViews, err := a.activityReportViewSuffixes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(availableViews) == 0 {
+		return nil, errors.New("no dbo.V_2AM04_* views found")
+	}
+
+	viewSuffix := strings.TrimSpace(view)
+	if viewSuffix == "" {
+		viewSuffix = availableViews[len(availableViews)-1]
+	}
+	viewNumber, err := strconv.Atoi(viewSuffix)
+	if err != nil || viewNumber < 1 || viewNumber > 12 {
+		return nil, errors.New("view must be between 01 and 12")
+	}
+	viewName := fmt.Sprintf("V_2AM04_%02d", viewNumber)
+	viewExists := false
+	for _, availableView := range availableViews {
+		if availableView == fmt.Sprintf("%02d", viewNumber) {
+			viewExists = true
+			break
+		}
+	}
+	if !viewExists {
+		return nil, fmt.Errorf("view dbo.%s was not found", viewName)
+	}
+
+	viewRows, err := a.db.QueryContext(ctx, `
+SELECT v.name
+FROM sys.views AS v
+INNER JOIN sys.schemas AS s ON s.schema_id = v.schema_id
+WHERE s.name = @p1 AND v.name LIKE @p2 AND v.name = @p3
+ORDER BY v.name`, "dbo", "V[_]2AM04[_]%", viewName)
+	if err != nil {
+		return nil, err
+	}
+	defer viewRows.Close()
+
+	viewQueries := make([]string, 0)
+	for viewRows.Next() {
+		var viewName string
+		if err := viewRows.Scan(&viewName); err != nil {
+			return nil, err
+		}
+		if !strings.HasPrefix(strings.ToUpper(viewName), "V_2AM04_") {
+			continue
+		}
+		quotedViewName := strings.ReplaceAll(viewName, "]", "]]")
+		viewQueries = append(viewQueries, `SELECT
 CAST('' AS nvarchar(255)) AS title,
 CAST([Activity] AS nvarchar(255)) AS Activity_Code,
 CAST([Provider] AS nvarchar(255)) AS Provider,
-CAST([ProviderDepartment] AS nvarchar(255)) AS Provider_Department,
+CAST([Provider_Department] AS nvarchar(255)) AS Provider_Department,
 CAST([ActivityName] AS nvarchar(255)) AS Activity_Name,
 CAST([Unit] AS nvarchar(255)) AS Unit,
 TRY_CONVERT(float, [Rate]) AS Rate,
@@ -479,7 +580,16 @@ CAST([Month] AS nvarchar(50)) AS [Month],
 CAST([Receiver] AS nvarchar(255)) AS Department,
 TRY_CONVERT(float, [Quantity]) AS Qty,
 TRY_CONVERT(float, [Amount]) AS Amount
-FROM dbo.V_2AM04_12`
+	FROM [dbo].[`+quotedViewName+`]`)
+	}
+	if err := viewRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(viewQueries) == 0 {
+		return nil, fmt.Errorf("view dbo.%s was not found", viewName)
+	}
+
+	query := "SELECT * FROM (" + strings.Join(viewQueries, " UNION ALL ") + ") AS activity_report"
 	args := []any{}
 	conditions := []string{}
 	if strings.TrimSpace(year) != "" {
@@ -493,7 +603,7 @@ FROM dbo.V_2AM04_12`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY [Year] DESC, TRY_CONVERT(int, [Month]) DESC, [Receiver], [ActivityName]"
+	query += " ORDER BY [Year] DESC, TRY_CONVERT(int, [Month]) DESC, [Department], [Activity_Name]"
 
 	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
