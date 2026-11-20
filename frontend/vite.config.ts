@@ -15,8 +15,8 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://localhost:10100', changeOrigin: true },
-      '/uploads': { target: 'http://localhost:10100', changeOrigin: true },
+      '/api': { target: 'http://10.115.2.45:10100', changeOrigin: true },
+      '/uploads': { target: 'http://10.115.2.45:10100', changeOrigin: true },
     },
   },
 })

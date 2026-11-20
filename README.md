@@ -105,7 +105,7 @@ chmod +x sso-check-backend start-production.sh stop-production.sh
 The Linux package reads environment values from `dist/linux/.env` first. `build-linux.bat`
 and `build-linux.sh` copy the first available file from `.env`, `backend/.env`, or
 `DOCUMENT_ENV_FILE` into `dist/linux/.env`; if none exists they create `.env.example`.
-Before deploying, make sure the package has AD/LDAP and `VPN_LOGIN_DSN` values.
+Before deploying, make sure the package has AD/LDAP and `MNG_LOGIN_DSN` values.
 
 ## Environment
 
@@ -122,7 +122,7 @@ APP_ROOT=/path/to/SSO_Check
 FRONTEND_DIR=/path/to/frontend/dist
 UPLOAD_DIR=/path/to/SSO_Check/uploads/imgs
 UPLOAD_URL=uploads/imgs/
-VPN_LOGIN_DSN=sqlserver://user:password@server?database=vpn_documents&encrypt=disable&TrustServerCertificate=true
+MNG_LOGIN_DSN=sqlserver://user:password@server?database=MNG_login&encrypt=disable&TrustServerCertificate=true
 AD_LDAP_URL=ldap://ad.example.local:389
 AD_LDAP_DOMAIN=example.local
 AD_LDAP_BIND_PATTERN=
@@ -131,8 +131,8 @@ AD_LDAP_INSECURE_TLS=false
 AD_LDAP_TIMEOUT_SEC=5
 ```
 
-Login uses AD/LDAP first, then checks `dbo.vpn_login` through `VPN_LOGIN_DSN`.
-Only `status = ACTIVE` is allowed. SSO_Check does not write Document audit/login logs.
+Password login uses AD/LDAP first, then checks `dbo.SystemUserPermissions` through `MNG_LOGIN_DSN`.
+Only `SystemCode = 'SSO-Check'` and `Active = 1` are allowed. A link containing the Base64 `action` value can perform the MNG permission check without a password. SSO_Check does not write Document audit/login logs.
 
 ## Backend Package Folders
 
@@ -164,6 +164,6 @@ Backend direct endpoints are still available:
 - `GET /api/agents?action=get&id=1`
 - `GET /api/export?all=1` exports all `Agent_TNLX` rows.
 - `GET /api/export?userCheck=T9058&userCheck=T1234` exports selected `user_check` values.
-- `POST /api/SSO_Check/login` validates AD credentials and `dbo.vpn_login`, then returns `{ success, username, role }`.
+- `POST /api/SSO_Check/login` validates AD credentials and `dbo.SystemUserPermissions`, or accepts `{ action }` for link login, then returns `{ success, username, role }`.
 - `POST /api/agents` with `action=create|update|delete`
 - Static uploads: `/uploads/...`

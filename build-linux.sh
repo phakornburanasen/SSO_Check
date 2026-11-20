@@ -41,7 +41,7 @@ DB_USER=sa
 DB_PASS=
 DB_ENCRYPT=disable
 DB_TRUST_SERVER_CERTIFICATE=true
-VPN_LOGIN_DSN=sqlserver://user:password@server:1433?database=vpn_documents&encrypt=disable&TrustServerCertificate=true
+MNG_LOGIN_DSN=sqlserver://user:password@server:1433?database=MNG_login&encrypt=disable&TrustServerCertificate=true
 AD_LDAP_URL=ldaps://ad.example.local
 AD_LDAP_DOMAIN=thanulux.local
 AD_LDAP_BIND_PATTERN=

@@ -1,0 +1,31 @@
+ช่วยแก้เงื่อนไขการ login เข้าสู่ระบบให้ทีจากเดิมที่ต้องเช็คสิทธิ์การเข้าใช้งานที่ฐานข้อมูล vpn_documents 
+ตาราง dbo.vpn_login
+
+ขอปรับเปลี่ยนเป็น
+เมื่อ login ด้วย user AD ถูกต้องสำเร็จ
+
+ฐานข้อมูล MNG_login
+โดยตรวจเงื่อนไขหลักดังนี้:
+
+```sql
+SELECT Active
+FROM dbo.SystemUserPermissions
+WHERE Username = @Username
+  AND SystemCode = 'SSO-Check'
+  AND Active = 1;
+```
+
+อย่างที่ 2 คือสามารถ login ผ่าน link ได้โดยจะมีการส่งค่าแบบนี้ สำหรับเช็คสิทธิ์การเข้าใช้งานระบบ
+http://10.0.32.71/SSO_Check/?action=dXNlcm5hbWUgOlQ5MDU4LFN5c3RlbUNvZGUgOlNTTy1DaGVjayxhY3RpdmUgOjE=
+
+แต่จะเป็นการข้ามการใส่ password ช่วยปรับให้ที
+โดยการ login ด้วย password frontend จะส่งค่าต่อไปนี้ไปทำการเช็คเข้าสู่ระบบ
+ตัวอย่างข้อมูล:
+
+```json
+{
+  "username": "T9058",
+  "SystemCode": "SSO-Check",
+  "password": "รหัสผ่าน AD"
+}
+```

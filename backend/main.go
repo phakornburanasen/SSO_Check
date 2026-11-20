@@ -31,7 +31,7 @@ import (
 
 type app struct {
 	db          *sql.DB
-	vpnDB       *sql.DB
+	mngLoginDB  *sql.DB
 	appRoot     string
 	uploadDir   string
 	uploadURL   string
@@ -40,7 +40,7 @@ type app struct {
 }
 
 type authConfig struct {
-	vpnLoginDSN string
+	mngLoginDSN string
 	ldapURL     string
 	ldapDomain  string
 	baseDN      string
@@ -55,9 +55,13 @@ type authConfig struct {
 }
 
 type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username   string `json:"username"`
+	SystemCode string `json:"SystemCode"`
+	Password   string `json:"password"`
+	Action     string `json:"action"`
 }
+
+const systemCode = "SSO-Check"
 
 type loginResponse struct {
 	Success     bool   `json:"success"`
@@ -164,24 +168,24 @@ func main() {
 	}
 
 	authCfg := loadAuthConfig()
-	var vpnDB *sql.DB
-	if strings.TrimSpace(authCfg.vpnLoginDSN) != "" {
-		vpnDB, err = sql.Open("sqlserver", authCfg.vpnLoginDSN)
+	var mngLoginDB *sql.DB
+	if strings.TrimSpace(authCfg.mngLoginDSN) != "" {
+		mngLoginDB, err = sql.Open("sqlserver", authCfg.mngLoginDSN)
 		if err != nil {
-			log.Fatalf("open vpn login database: %v", err)
+			log.Fatalf("open MNG login database: %v", err)
 		}
-		vpnCtx, vpnCancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer vpnCancel()
-		if err := vpnDB.PingContext(vpnCtx); err != nil {
-			log.Fatalf("connect vpn login database: %v", err)
+		mngCtx, mngCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer mngCancel()
+		if err := mngLoginDB.PingContext(mngCtx); err != nil {
+			log.Fatalf("connect MNG login database: %v", err)
 		}
 	} else {
-		log.Print("VPN_LOGIN_DSN is not set; login endpoint will return service unavailable")
+		log.Print("MNG_LOGIN_DSN is not set; login endpoint will return service unavailable")
 	}
 
 	a := &app{
 		db:          db,
-		vpnDB:       vpnDB,
+		mngLoginDB:  mngLoginDB,
 		appRoot:     appRoot,
 		uploadDir:   uploadDir,
 		uploadURL:   strings.Trim(getenv("UPLOAD_URL", "uploads/imgs/"), "/") + "/",
@@ -281,7 +285,7 @@ func loadAuthConfig() authConfig {
 	tlsMin := tlsVersionEnv("AD_TLS_MIN_VERSION", tls.VersionTLS12)
 	tlsMax := tlsVersionEnv("AD_TLS_MAX_VERSION", 0)
 	return authConfig{
-		vpnLoginDSN: strings.TrimSpace(os.Getenv("VPN_LOGIN_DSN")),
+		mngLoginDSN: strings.TrimSpace(os.Getenv("MNG_LOGIN_DSN")),
 		ldapURL:     ldapURL,
 		ldapDomain:  ldapDomain,
 		baseDN:      baseDN,
@@ -329,32 +333,37 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := normalizeADUsername(in.Username)
-	if username == "" || strings.TrimSpace(in.Password) == "" {
-		writeJSON(w, http.StatusUnauthorized, loginResponse{Success: false, Error: "Username or password is invalid"})
-		return
-	}
-	if len(username) > 50 {
-		writeJSON(w, http.StatusBadRequest, loginResponse{Success: false, Error: "Username is too long"})
-		return
-	}
-
-	displayName, err := a.authenticateAD(r.Context(), username, in.Password)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, errInvalidCredentials) {
-			status = http.StatusUnauthorized
-		} else if errors.Is(err, errAuthNotReady) {
-			status = http.StatusServiceUnavailable
+	var username, displayName, role string
+	var err error
+	if strings.TrimSpace(in.Action) != "" {
+		username, err = a.loginFromAction(r.Context(), in.Action)
+		displayName, role = username, "user"
+	} else {
+		username = normalizeADUsername(in.Username)
+		if username == "" || strings.TrimSpace(in.Password) == "" {
+			writeJSON(w, http.StatusUnauthorized, loginResponse{Success: false, Error: "Username or password is invalid"})
+			return
 		}
-		writeJSON(w, status, loginResponse{Success: false, Error: err.Error()})
-		return
+		if len(username) > 50 {
+			writeJSON(w, http.StatusBadRequest, loginResponse{Success: false, Error: "Username is too long"})
+			return
+		}
+		if code := strings.TrimSpace(in.SystemCode); code != "" && !strings.EqualFold(code, systemCode) {
+			writeJSON(w, http.StatusBadRequest, loginResponse{Success: false, Error: "Invalid system code"})
+			return
+		}
+		displayName, err = a.authenticateAD(r.Context(), username, in.Password)
+		if err == nil {
+			role, err = a.checkLoginPermission(r.Context(), username)
+		}
 	}
-
-	role, err := a.checkLoginPermission(r.Context(), username)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, errNoPermission) {
+		if errors.Is(err, errInvalidAction) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, errInvalidCredentials) {
+			status = http.StatusUnauthorized
+		} else if errors.Is(err, errNoPermission) {
 			status = http.StatusForbidden
 		} else if errors.Is(err, errAuthNotReady) {
 			status = http.StatusServiceUnavailable
@@ -1333,10 +1342,53 @@ type scanner interface {
 }
 
 var (
-	errAuthNotReady       = errors.New("login service is not configured")
+	errAuthNotReady       = errors.New("ยังไม่ได้ตั้งค่าบริการเข้าสู่ระบบ")
 	errInvalidCredentials = errors.New("username or password is invalid")
+	errInvalidAction      = errors.New("invalid login action")
 	errNoPermission       = errors.New("บัญชี AD นี้ไม่มีสิทธิ์เข้าใช้งานระบบ")
 )
+
+func (a *app) loginFromAction(ctx context.Context, encoded string) (string, error) {
+	payload, err := decodeLoginAction(encoded)
+	if err != nil {
+		return "", errInvalidAction
+	}
+	username := normalizeADUsername(payload["username"])
+	if username == "" || len(username) > 50 || !strings.EqualFold(payload["systemcode"], systemCode) || payload["active"] != "1" {
+		return "", errInvalidAction
+	}
+	if _, err := a.checkLoginPermission(ctx, username); err != nil {
+		return "", err
+	}
+	return username, nil
+}
+
+func decodeLoginAction(encoded string) (map[string]string, error) {
+	var data []byte
+	var err error
+	for _, decoder := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		data, err = decoder.DecodeString(strings.TrimSpace(encoded))
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string)
+	for _, item := range strings.Split(string(data), ",") {
+		parts := strings.SplitN(item, ":", 2)
+		if len(parts) != 2 {
+			return nil, errInvalidAction
+		}
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		if key == "" {
+			return nil, errInvalidAction
+		}
+		values[key] = strings.TrimSpace(parts[1])
+	}
+	return values, nil
+}
 
 func (a *app) authenticateAD(ctx context.Context, username, password string) (string, error) {
 	if strings.TrimSpace(a.auth.ldapURL) == "" {
@@ -1469,29 +1521,27 @@ func (a *app) ldapTLSConfig() *tls.Config {
 }
 
 func (a *app) checkLoginPermission(ctx context.Context, username string) (string, error) {
-	if a.vpnDB == nil || strings.TrimSpace(a.auth.vpnLoginDSN) == "" {
-		return "", fmt.Errorf("%w: VPN_LOGIN_DSN is required", errAuthNotReady)
+	if a.mngLoginDB == nil || strings.TrimSpace(a.auth.mngLoginDSN) == "" {
+		return "", fmt.Errorf("%w: ต้องกำหนดค่า MNG_LOGIN_DSN ก่อนใช้งานระบบ login", errAuthNotReady)
 	}
 
-	var adUser, status, role sql.NullString
-	err := a.vpnDB.QueryRowContext(ctx, `
-SELECT ADUser, status, role
-FROM dbo.vpn_login
-WHERE UPPER(ADUser) = @p1`, username).Scan(&adUser, &status, &role)
+	var active bool
+	err := a.mngLoginDB.QueryRowContext(ctx, `
+SELECT Active
+FROM dbo.SystemUserPermissions
+WHERE Username = @p1
+  AND SystemCode = @p2
+  AND Active = 1`, username, systemCode).Scan(&active)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errNoPermission
 	}
 	if err != nil {
 		return "", err
 	}
-	if !strings.EqualFold(strings.TrimSpace(status.String), "ACTIVE") {
+	if !active {
 		return "", errNoPermission
 	}
-	normalizedRole := strings.ToLower(strings.TrimSpace(role.String))
-	if normalizedRole == "" {
-		normalizedRole = "user"
-	}
-	return normalizedRole, nil
+	return "user", nil
 }
 
 func normalizeADUsername(value string) string {
@@ -1689,7 +1739,6 @@ func loadEnvFiles(paths ...string) {
 		}
 		if _, err := os.Stat(path); err == nil {
 			loadEnvFile(path)
-			return
 		}
 	}
 }

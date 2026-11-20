@@ -42,7 +42,7 @@ if defined ENV_SOURCE (
     echo DB_PASS=
     echo DB_ENCRYPT=disable
     echo DB_TRUST_SERVER_CERTIFICATE=true
-    echo VPN_LOGIN_DSN=sqlserver://user:password@server:1433?database=vpn_documents^&encrypt=disable^&TrustServerCertificate=true
+    echo MNG_LOGIN_DSN=sqlserver://user:password@server:1433?database=MNG_login^&encrypt=disable^&TrustServerCertificate=true
     echo AD_LDAP_URL=ldaps://ad.example.local
     echo AD_LDAP_DOMAIN=thanulux.local
     echo AD_LDAP_BIND_PATTERN=

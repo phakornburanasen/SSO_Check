@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Camera,
   BarChart3,
@@ -109,6 +109,8 @@ type LoginResponse = {
   error?: string
 }
 
+const SYSTEM_CODE = 'SSO-Check'
+
 type LoginSession = {
   username: string
   displayName: string
@@ -149,7 +151,7 @@ const cropAspectPresets: { label: string; value: number | null }[] = [
   { label: '16:9', value: 16 / 9 },
 ]
 
-const DEFAULT_API_BASE = `http://${window.location.hostname}:10100/api/SSO_Check`
+const DEFAULT_API_BASE = `http://${window.location.hostname}:8000/api/SSO_Check`
 const API_BASE = (import.meta.env.VITE_API_BASE || DEFAULT_API_BASE).replace(/\/$/, '')
 const MUTATION_API_BASE = (import.meta.env.VITE_MUTATION_API_BASE || API_BASE).replace(/\/$/, '')
 const apiURL = (path: string) => `${API_BASE}${path}`
@@ -1329,9 +1331,10 @@ function LoginPage({ onLogin }: { onLogin: (session: LoginSession) => void }) {
   const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const linkAction = useMemo(() => new URLSearchParams(window.location.search).get('action') || '', [])
+  const autoLoginStarted = useRef(false)
 
-  async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function login(action = '') {
     setSubmitting(true)
     setError('')
     try {
@@ -1340,7 +1343,7 @@ function LoginPage({ onLogin }: { onLogin: (session: LoginSession) => void }) {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify(action ? { action } : { username, SystemCode: SYSTEM_CODE, password }),
         },
         20000,
       )
@@ -1363,6 +1366,18 @@ function LoginPage({ onLogin }: { onLogin: (session: LoginSession) => void }) {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  useEffect(() => {
+    if (linkAction && !autoLoginStarted.current) {
+      autoLoginStarted.current = true
+      void login(linkAction)
+    }
+  }, [linkAction])
+
+  function submitLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void login()
   }
 
   return (
