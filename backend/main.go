@@ -45,6 +45,7 @@ type authConfig struct {
 	ldapDomain  string
 	baseDN      string
 	bindPattern string
+	userInfoAPI string
 	startTLS    bool
 	insecureTLS bool
 	tlsMin      uint16
@@ -290,6 +291,7 @@ func loadAuthConfig() authConfig {
 		ldapDomain:  ldapDomain,
 		baseDN:      baseDN,
 		bindPattern: strings.TrimSpace(os.Getenv("AD_LDAP_BIND_PATTERN")),
+		userInfoAPI: strings.TrimSpace(getenv("USERINFO_API_BASE", "http://10.0.32.71:23007/api/userinfo")),
 		startTLS:    boolEnv("AD_LDAP_START_TLS", false),
 		insecureTLS: boolEnv("AD_LDAP_INSECURE_TLS", boolEnv("AD_TLS_INSECURE", false)),
 		tlsMin:      tlsMin,
@@ -336,8 +338,8 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	var username, displayName, role string
 	var err error
 	if strings.TrimSpace(in.Action) != "" {
-		username, err = a.loginFromAction(r.Context(), in.Action)
-		displayName, role = username, "user"
+		username, displayName, err = a.loginFromAction(r.Context(), in.Action)
+		role = "user"
 	} else {
 		username = normalizeADUsername(in.Username)
 		if username == "" || strings.TrimSpace(in.Password) == "" {
@@ -1348,19 +1350,37 @@ var (
 	errNoPermission       = errors.New("บัญชี AD นี้ไม่มีสิทธิ์เข้าใช้งานระบบ")
 )
 
-func (a *app) loginFromAction(ctx context.Context, encoded string) (string, error) {
+func (a *app) loginFromAction(ctx context.Context, encoded string) (string, string, error) {
 	payload, err := decodeLoginAction(encoded)
 	if err != nil {
-		return "", errInvalidAction
+		return "", "", errInvalidAction
 	}
 	username := normalizeADUsername(payload["username"])
 	if username == "" || len(username) > 50 || !strings.EqualFold(payload["systemcode"], systemCode) || payload["active"] != "1" {
-		return "", errInvalidAction
+		return "", "", errInvalidAction
 	}
 	if _, err := a.checkLoginPermission(ctx, username); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return username, nil
+	displayName := strings.TrimSpace(firstNonEmpty(
+		a.lookupDisplayNameFromUserInfo(ctx, username),
+		payload["displayname"],
+		payload["display_name"],
+		payload["name"],
+		payload["fullname"],
+		payload["full_name"],
+		payload["cn"],
+	))
+	if displayName == "" {
+		displayName = a.lookupDisplayNameByUsername(ctx, username)
+	}
+	return username, displayName, nil
+}
+
+type userInfoResponse struct {
+	Success     bool   `json:"success"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
 }
 
 func decodeLoginAction(encoded string) (map[string]string, error) {
@@ -1430,6 +1450,68 @@ func (a *app) authenticateAD(ctx context.Context, username, password string) (st
 		return "", fmt.Errorf("ตรวจสอบ AD/LDAP ไม่สำเร็จ: %w", err)
 	}
 	return a.lookupDisplayName(conn, username), nil
+}
+
+func (a *app) lookupDisplayNameFromUserInfo(ctx context.Context, username string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(a.auth.userInfoAPI), "/")
+	if baseURL == "" {
+		return ""
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/"+url.PathEscape(username), nil)
+	if err != nil {
+		return ""
+	}
+
+	client := &http.Client{Timeout: a.auth.timeout}
+	res, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	var payload userInfoResponse
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return ""
+	}
+	if !payload.Success {
+		return ""
+	}
+	return strings.TrimSpace(payload.DisplayName)
+}
+
+func (a *app) lookupDisplayNameByUsername(ctx context.Context, username string) string {
+	if strings.TrimSpace(a.auth.ldapURL) == "" || strings.TrimSpace(a.auth.baseDN) == "" {
+		return username
+	}
+
+	conn, err := ldap.DialURL(
+		a.auth.ldapURL,
+		ldap.DialWithDialer(&net.Dialer{Timeout: a.auth.timeout}),
+		ldap.DialWithTLSConfig(a.ldapTLSConfig()),
+	)
+	if err != nil {
+		return username
+	}
+	defer conn.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetTimeout(time.Until(deadline))
+	} else {
+		conn.SetTimeout(a.auth.timeout)
+	}
+
+	if a.auth.startTLS {
+		if err := conn.StartTLS(a.ldapTLSConfig()); err != nil {
+			return username
+		}
+	}
+
+	return a.lookupDisplayName(conn, username)
 }
 
 func (a *app) lookupDisplayName(conn *ldap.Conn, username string) string {
