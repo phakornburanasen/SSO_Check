@@ -258,15 +258,45 @@
     @apply relative flex min-h-[44dvh] flex-col overflow-hidden bg-[#101827] px-8 py-9 text-white sm:px-14 lg:min-h-dvh lg:px-14 lg:py-24;
     background:
       radial-gradient(circle at 18% 10%, rgb(18 112 117 / 34%), transparent 34%),
+      radial-gradient(circle at 82% 82%, rgb(15 123 120 / 18%), transparent 30%),
       linear-gradient(120deg, #123f46 0%, #101827 58%, #111827 100%);
   }
+  .login-brand-panel::before {
+    position: absolute;
+    inset: auto auto 84px 56px;
+    width: 180px;
+    height: 180px;
+    border-radius: 9999px;
+    background: radial-gradient(circle, rgb(21 222 209 / 20%) 0%, rgb(21 222 209 / 5%) 38%, transparent 70%);
+    filter: blur(6px);
+    content: '';
+  }
+  .login-brand-panel::after {
+    position: absolute;
+    right: -10rem;
+    bottom: -12rem;
+    width: 30rem;
+    height: 30rem;
+    border: 1px solid rgb(160 235 225 / 12%);
+    border-radius: 9999px;
+    box-shadow:
+      0 0 0 4rem rgb(160 235 225 / 3%),
+      0 0 0 8rem rgb(160 235 225 / 2%);
+    content: '';
+  }
+  .login-brand-panel > * { @apply relative z-10; }
   .login-logo { @apply h-10 w-28 object-contain sm:h-12 sm:w-32; }
   .login-brand-copy { @apply mt-auto max-w-xl pb-14 pt-20 lg:pb-24; }
   .login-eyebrow { @apply mb-5 text-xs font-bold uppercase tracking-wider text-[#15ded1]; }
   .login-brand-copy h1 { @apply mb-5 text-5xl font-bold tracking-tight sm:text-6xl; }
   .login-brand-copy p:not(.login-eyebrow) { @apply text-sm leading-7 text-white; }
   .login-footer { @apply flex flex-wrap justify-between gap-4 border-t border-white/10 pt-7 text-[11px] text-sky-100; }
-  .login-form-panel { @apply flex min-h-[56dvh] items-center justify-center px-5 py-10 sm:px-8 lg:min-h-dvh; }
+  .login-form-panel {
+    @apply flex min-h-[56dvh] items-center justify-center px-5 py-10 sm:px-8 lg:min-h-dvh;
+    background:
+      radial-gradient(circle at top right, rgb(15 123 120 / 5%), transparent 24%),
+      linear-gradient(180deg, #f7f9fc 0%, #f2f6fb 100%);
+  }
   .login-card {
     @apply w-full max-w-md rounded-2xl border border-[#d5e0ec] bg-white px-8 py-10 shadow-[0_24px_70px_rgb(15_23_42_/_10%)];
     animation: login-card-rise 720ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
@@ -277,13 +307,30 @@
   .login-card-description { @apply mt-2 text-sm text-muted-foreground; }
   .login-field { @apply mt-7 block; }
   .login-field > span { @apply mb-2 block text-xs font-bold tracking-wide text-[#09142a]; }
-  .login-password { @apply relative; }
+  .login-field > [data-slot="input"],
+  .login-password > [data-slot="input"] {
+    height: 38px;
+    border-radius: 8px !important;
+    @apply border-[#1118271f] bg-white;
+  }
+  .login-field > [data-slot="input"]:focus-visible,
+  .login-password > [data-slot="input"]:focus-visible {
+    @apply border-primary/30 ring-4 ring-primary/12 bg-[#fdfefe];
+  }
+  .login-password {
+    border-radius: 8px;
+    @apply relative;
+  }
   .login-password input { @apply pr-12; }
   .login-password button {
-    @apply absolute right-3 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-[#7c95b4] transition-colors hover:bg-secondary hover:text-primary;
+    @apply absolute right-3 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-lg text-[#7c95b4] transition-colors hover:bg-secondary hover:text-primary;
   }
   .login-error { @apply mt-5 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive; }
-  .login-submit { @apply mt-6 w-full bg-primary shadow-[0_14px_24px_rgb(15_123_120_/_20%)] hover:bg-primary/90; }
+  .login-submit {
+    height: 38px;
+    border-radius: 8px !important;
+    @apply mt-6 w-full bg-primary shadow-[0_14px_24px_rgb(15_123_120_/_20%)] hover:bg-primary/90;
+  }
 }
 
 @keyframes login-card-rise {
